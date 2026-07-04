@@ -26,7 +26,9 @@ import Units from "@/pages/Units";
 import Tenants from "@/pages/Tenants";
 import Payments from "@/pages/Payments";
 import AgentMaintenance from "@/pages/AgentMaintenance";
-import RentReminders from "@/pages/RentReminders";
+import Notices from "@/pages/Notices";
+import Invitations from "@/pages/Invitations";
+import Settings from "@/pages/Settings";
 
 // Tenant Pages
 import TenantUnit from "@/pages/TenantUnit";
@@ -72,7 +74,9 @@ export default function App() {
           <Route path="/tenants" element={<Tenants />} />
           <Route path="/payments" element={<Payments />} />
           <Route path="/maintenance" element={<AgentMaintenance />} />
-          <Route path="/reminders" element={<RentReminders />} />
+          <Route path="/notices" element={<Notices />} />
+          <Route path="/invitations" element={<Invitations />} />
+          <Route path="/settings" element={<Settings />} />
 
           {/* Tenant Routes */}
           <Route path="/tenant/unit" element={<TenantUnit />} />

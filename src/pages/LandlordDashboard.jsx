@@ -1,15 +1,19 @@
 import React, { useState, useEffect } from "react";
 import { entities } from "@/api/supabaseClient";
+import { useAuth } from "@/lib/AuthContext";
 import { Link } from "react-router-dom";
-import { DoorOpen, Users, CreditCard, LogOut, CheckCircle2, Clock, Building2, MapPin } from "lucide-react";
+import { DoorOpen, Users, CreditCard, LogOut, CheckCircle2, Clock, Building2, MapPin, AlertCircle } from "lucide-react";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
 import PageHeader from "@/components/layout/PageHeader";
 import { Button } from "@/components/ui/button";
 
 export default function LandlordDashboard() {
+  const { signOut, profile } = useAuth();
   const [properties, setProperties] = useState([]);
   const [units, setUnits] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [allMonthPayments, setAllMonthPayments] = useState([]);
+  const [allMonthInvoices, setAllMonthInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,8 +27,17 @@ export default function LandlordDashboard() {
       if (props.length > 0) {
         const allUnits = await entities.Unit.list();
         setUnits(allUnits);
-        const allPayments = await entities.Payment.list("-payment_date", 5);
-        setPayments(allPayments);
+        // Fetch recent 5 for display, all current-month payments & invoices for stats
+        const now = new Date();
+        const currentMonth = now.toLocaleString("en", { month: "long", year: "numeric" });
+        const [recentPays, monthPays, monthInvs] = await Promise.all([
+          entities.Payment.list("-payment_date", 5),
+          entities.Payment.filter({ month_for: currentMonth }),
+          entities.Invoice.filter({ month_for: currentMonth }),
+        ]);
+        setPayments(recentPays);
+        setAllMonthPayments(monthPays);
+        setAllMonthInvoices(monthInvs);
       }
     } catch (e) {
       console.error(e);
@@ -34,8 +47,7 @@ export default function LandlordDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("demo_role");
-    window.location.href = "/login";
+    signOut();
   };
 
   const formatKES = (n) => `KES ${(n || 0).toLocaleString()}`;
@@ -69,9 +81,15 @@ export default function LandlordDashboard() {
   const totalRent = units.reduce((s, u) => s + (u.monthly_rent || 0), 0);
   const now = new Date();
   const currentMonth = now.toLocaleString("en", { month: "long", year: "numeric" });
-  const collected = payments.filter((p) => p.month_for === currentMonth).reduce((s, p) => s + (p.amount || 0), 0);
-  const isPaid = collected >= totalRent;
-  const balance = totalRent - collected;
+  // Invoice-driven figures — prevents negative outstanding from mixed baselines
+  const invoiced = allMonthInvoices.reduce((s, i) => s + (i.total || 0), 0);
+  const collected = allMonthInvoices.reduce((s, i) => s + (i.amount_paid || 0), 0);
+  const pendingAmt = allMonthPayments.filter((p) => p.status === "Pending").reduce((s, p) => s + (p.amount || 0), 0);
+  const outstanding = allMonthInvoices.reduce((s, i) =>
+    i.status !== "Paid" ? s + Math.max(0, (i.total || 0) - (i.amount_paid || 0)) : s, 0
+  );
+  const isPaid = outstanding <= 0 && invoiced > 0;
+  const balance = outstanding;
 
   return (
     <div>
@@ -85,6 +103,23 @@ export default function LandlordDashboard() {
       />
 
       <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
+        {!profile?.phone && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center justify-between gap-3 shadow-sm">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold text-amber-900">Update your phone number</p>
+                <p className="text-xs text-amber-700">A phone number is required to receive notifications and receipts.</p>
+              </div>
+            </div>
+            <Link to="/settings" className="shrink-0">
+              <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white h-8 text-xs font-semibold px-3">
+                Update
+              </Button>
+            </Link>
+          </div>
+        )}
+
         {/* Property card */}
         <div className="bg-card rounded-xl border border-border p-4 shadow-sm">
           <div className="flex items-start gap-3">
@@ -110,6 +145,24 @@ export default function LandlordDashboard() {
           <p className="text-xs text-muted-foreground mt-1">
             {isPaid ? `All rent collected for ${currentMonth} 🎉` : `Outstanding for ${currentMonth}`}
           </p>
+          {!isPaid && (
+            <div className="mt-3 pt-3 border-t border-amber-200/60 space-y-1.5">
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Total Invoiced</span>
+                <span className="font-medium">{formatKES(invoiced)}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-muted-foreground">Collected (Verified)</span>
+                <span className="font-medium text-emerald-600">{formatKES(collected)}</span>
+              </div>
+              {pendingAmt > 0 && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-amber-700 font-medium">Pending Verification</span>
+                  <span className="font-medium text-amber-700">{formatKES(pendingAmt)}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Simple stats — no charts */}
@@ -165,10 +218,21 @@ export default function LandlordDashboard() {
               {payments.map((p) => (
                 <div key={p.id} className="px-4 py-3 flex items-center justify-between">
                   <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{p.tenant_name || "Tenant"}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm font-medium truncate">{p.tenant_name || "Tenant"}</p>
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium border ${
+                        p.status === "Verified"
+                          ? "text-emerald-700 bg-emerald-50 border-emerald-100"
+                          : "text-amber-700 bg-amber-50 border-amber-100"
+                      }`}>
+                        {p.status === "Verified" ? "Verified" : "Pending"}
+                      </span>
+                    </div>
                     <p className="text-[11px] text-muted-foreground">{p.unit_number} · {p.month_for}</p>
                   </div>
-                  <span className="text-sm font-bold text-emerald-600 shrink-0 ml-3">
+                  <span className={`text-sm font-bold shrink-0 ml-3 ${
+                    p.status === "Verified" ? "text-emerald-600" : "text-amber-600"
+                  }`}>
                     {formatKES(p.amount)}
                   </span>
                 </div>

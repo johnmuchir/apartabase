@@ -1,35 +1,57 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
-import { Lock } from 'lucide-react';
+import { entities } from '@/api/supabaseClient';
+import { Lock, Loader2 } from 'lucide-react';
 import AuthLayout from '@/components/AuthLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useToast } from '@/hooks/use-toast';
+import { useToast } from '@/components/ui/use-toast';
 
 export default function AcceptInvite() {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  
+  const emailParam = searchParams.get('email');
+  const tokenParam = searchParams.get('token');
+
+  const [invitation, setInvitation] = useState(null);
+  const [checkingInvite, setCheckingInvite] = useState(true);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [loading, setLoading] = useState(false);
-  const [tokenError, setTokenError] = useState(false);
 
-  // Supabase puts the token in the URL hash when following an invite link
+  // Validate the database invitation
   useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash.includes('access_token') && !hash.includes('type=invite') && !hash.includes('type=recovery')) {
-      // No token present — maybe already processed or direct visit
-      const params = new URLSearchParams(hash.replace('#', ''));
-      if (!params.get('access_token')) {
-        setTokenError(true);
+    async function checkInvite() {
+      if (!emailParam || !tokenParam) {
+        setCheckingInvite(false);
+        return;
+      }
+      try {
+        const results = await entities.Invitation.filter({
+          email: emailParam,
+          token: tokenParam,
+          status: 'pending'
+        });
+        
+        if (results && results.length > 0) {
+          setInvitation(results[0]);
+        }
+      } catch (err) {
+        console.error('Error verifying invitation:', err);
+      } finally {
+        setCheckingInvite(false);
       }
     }
-  }, []);
+    checkInvite();
+  }, [emailParam, tokenParam]);
 
   const handleSetPassword = async (e) => {
     e.preventDefault();
+    if (!invitation) return;
     if (password !== confirm) {
       toast({ title: 'Passwords do not match', variant: 'destructive' });
       return;
@@ -40,13 +62,30 @@ export default function AcceptInvite() {
     }
     setLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
+      // 1. Sign up the user (with custom role and name in metadata)
+      const { data, error } = await supabase.auth.signUp({
+        email: invitation.email,
+        password: password,
+        options: {
+          data: {
+            full_name: invitation.full_name,
+            role: invitation.role
+          }
+        }
+      });
       if (error) throw error;
-      toast({ title: 'Password set! Welcome to ApartaBase.' });
-      navigate('/', { replace: true });
+
+      // 2. Mark the invitation as accepted
+      await entities.Invitation.update(invitation.id, { status: 'accepted' });
+
+      // 3. Sign out auto-logged-in session to force them to sign in manually on /login
+      await supabase.auth.signOut();
+
+      toast({ title: 'Account activated successfully! Please sign in.' });
+      navigate('/login', { replace: true });
     } catch (err) {
       toast({
-        title: 'Error setting password',
+        title: 'Activation failed',
         description: err.message,
         variant: 'destructive',
       });
@@ -55,12 +94,20 @@ export default function AcceptInvite() {
     }
   };
 
-  if (tokenError) {
+  if (checkingInvite) {
     return (
-      <AuthLayout icon={Lock} title="Invalid Link" subtitle="This invitation link is invalid or has already been used.">
+      <div className="fixed inset-0 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!invitation) {
+    return (
+      <AuthLayout icon={Lock} title="Invalid Link" subtitle="This invitation link is invalid, expired, or has already been used.">
         <div className="text-center space-y-4 py-2">
           <p className="text-sm text-muted-foreground">
-            Please contact your agent for a new invitation.
+            Please contact the administrator or agent for a new invitation link.
           </p>
           <Button variant="outline" className="w-full" onClick={() => navigate('/login')}>
             Go to Login
@@ -73,12 +120,12 @@ export default function AcceptInvite() {
   return (
     <AuthLayout
       icon={Lock}
-      title="Set Your Password"
-      subtitle="You've been invited to ApartaBase. Set a password to activate your account."
+      title="Create Your Account"
+      subtitle={`Welcome, ${invitation.full_name}. Create a password to register as a ${invitation.role}.`}
     >
       <form onSubmit={handleSetPassword} className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="new-password">New password</Label>
+          <Label htmlFor="new-password">Password</Label>
           <Input
             id="new-password"
             type="password"
@@ -90,11 +137,11 @@ export default function AcceptInvite() {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="confirm-password">Confirm password</Label>
+          <Label htmlFor="confirm-password">Confirm Password</Label>
           <Input
             id="confirm-password"
             type="password"
-            placeholder="Repeat your password"
+            placeholder="Confirm your password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             required
@@ -102,7 +149,7 @@ export default function AcceptInvite() {
           />
         </div>
         <Button type="submit" className="w-full h-11" disabled={loading}>
-          {loading ? 'Activating…' : 'Activate Account'}
+          {loading ? 'Activating Account…' : 'Register Account'}
         </Button>
       </form>
     </AuthLayout>

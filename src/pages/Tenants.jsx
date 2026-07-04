@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { entities } from "@/api/supabaseClient";
-import { Plus, Users, Search, Phone, DoorOpen } from "lucide-react";
+import { Plus, Users, Search, Phone, DoorOpen, Wallet, ChevronDown, ChevronUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,8 @@ export default function Tenants() {
   const [tenants, setTenants] = useState([]);
   const [properties, setProperties] = useState([]);
   const [units, setUnits] = useState([]);
+  const [deposits, setDeposits] = useState([]);
+  const [expandedTenantIds, setExpandedTenantIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -29,16 +31,28 @@ export default function Tenants() {
 
   const loadData = async () => {
     try {
-      const [t, p, u] = await Promise.all([
+      const [t, p, u, d] = await Promise.all([
         entities.Tenant.list("-created_date"),
         entities.Property.list(),
         entities.Unit.list(),
+        entities.TenantDeposit.list(),
       ]);
       setTenants(t);
       setProperties(p);
       setUnits(u);
+      setDeposits(d || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+  };
+
+  const toggleExpandTenant = (id) => {
+    const next = new Set(expandedTenantIds);
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+    setExpandedTenantIds(next);
   };
 
   const vacantUnits = units.filter((u) => u.status === "Vacant" && u.property_id === form.property_id);
@@ -122,6 +136,16 @@ export default function Tenants() {
                         {t.unit_number} · {t.property_name}
                       </span>
                     </div>
+                    <button
+                      onClick={() => toggleExpandTenant(t.id)}
+                      className="text-[10px] text-muted-foreground hover:text-foreground font-semibold flex items-center gap-1 mt-2.5 transition-colors"
+                    >
+                      {expandedTenantIds.has(t.id) ? (
+                        <>Hide Details <ChevronUp className="w-3.5 h-3.5" /></>
+                      ) : (
+                        <>View Details <ChevronDown className="w-3.5 h-3.5" /></>
+                      )}
+                    </button>
                   </div>
                   <div className="text-right shrink-0">
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -134,6 +158,57 @@ export default function Tenants() {
                     )}
                   </div>
                 </div>
+
+                {/* Collapsible Details */}
+                {expandedTenantIds.has(t.id) && (
+                  <div className="mt-3 pt-3 border-t border-border/60 space-y-3.5">
+                    {/* Extra Tenant Info */}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] bg-muted/30 p-3 rounded-xl border border-border/40">
+                      <div>
+                        <span className="text-muted-foreground block text-[9px] uppercase tracking-wider font-bold">National ID</span>
+                        <span className="font-semibold text-foreground">{t.id_number || "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground block text-[9px] uppercase tracking-wider font-bold">Email</span>
+                        <span className="font-semibold text-foreground truncate block">{t.email || "—"}</span>
+                      </div>
+                      <div className="col-span-2">
+                        <span className="text-muted-foreground block text-[9px] uppercase tracking-wider font-bold">Lease Start Date</span>
+                        <span className="font-semibold text-foreground">{t.lease_start || "—"}</span>
+                      </div>
+                    </div>
+
+                    {/* Deposits List */}
+                    {deposits.filter((d) => d.tenant_id === t.id).length > 0 && (
+                      <div className="space-y-1.5">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
+                          <Wallet className="w-3 h-3 text-primary" /> Refundable Deposits
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {deposits
+                            .filter((d) => d.tenant_id === t.id)
+                            .map((dep) => (
+                              <div key={dep.id} className="bg-muted/40 p-2.5 rounded-lg border border-border/30 flex items-center justify-between text-[11px]">
+                                <span className="text-muted-foreground truncate mr-2">{dep.deposit_type}</span>
+                                <div className="text-right shrink-0">
+                                  <span className="font-semibold text-foreground">KES {dep.amount_paid.toLocaleString()}</span>
+                                  <span className={`inline-block text-[9px] font-medium ml-1.5 px-1.5 py-0.5 rounded-full ${
+                                    dep.status === "Held"
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                                      : dep.status === "Refunded"
+                                      ? "bg-indigo-50 text-indigo-700 border border-indigo-100"
+                                      : "bg-amber-50 text-amber-700 border border-amber-100"
+                                  }`}>
+                                    {dep.status}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>

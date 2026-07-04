@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { entities } from "@/api/supabaseClient";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,7 +22,8 @@ function getMonthOptions() {
 
 export default function BulkInvoiceForm({ open, onOpenChange, units, leases, tenants, onCreated }) {
   const { toast } = useToast();
-  const [monthFor, setMonthFor] = useState("");
+  const currentMonth = new Date().toLocaleString("en", { month: "long", year: "numeric" });
+  const [monthFor, setMonthFor] = useState(currentMonth);
   const [dueDate, setDueDate] = useState("");
   const [selectedUnitIds, setSelectedUnitIds] = useState(new Set());
   const [generating, setGenerating] = useState(false);
@@ -33,7 +35,7 @@ export default function BulkInvoiceForm({ open, onOpenChange, units, leases, ten
 
   useEffect(() => {
     if (open) {
-      setMonthFor("");
+      setMonthFor(currentMonth);
       setDueDate("");
       setSelectedUnitIds(new Set(billableUnits.map((u) => u.id)));
     }
@@ -72,6 +74,20 @@ export default function BulkInvoiceForm({ open, onOpenChange, units, leases, ten
 
         if (u && l) {
           try {
+            const { count, error } = await supabase
+              .from("invoices")
+              .select("id", { count: "exact", head: true })
+              .eq("lease_id", l.id);
+
+            let invoiceItems = [];
+            const baseRent = l.monthly_rent || u.monthly_rent || 0;
+            let invoiceTotal = baseRent;
+
+            if (!error && count === 0 && l.deposit > 0) {
+              invoiceItems = [{ description: "Security Deposit", amount: l.deposit }];
+              invoiceTotal += l.deposit;
+            }
+
             await entities.Invoice.create({
               lease_id: l.id,
               unit_id: u.id,
@@ -82,9 +98,9 @@ export default function BulkInvoiceForm({ open, onOpenChange, units, leases, ten
               property_name: u.property_name || "",
               month_for: monthFor,
               due_date: dueDate || null,
-              base_rent: l.monthly_rent || u.monthly_rent || 0,
-              items: [],
-              total: l.monthly_rent || u.monthly_rent || 0,
+              base_rent: baseRent,
+              items: invoiceItems,
+              total: invoiceTotal,
               status: "Unpaid",
             });
             successCount++;

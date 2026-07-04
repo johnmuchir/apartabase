@@ -110,13 +110,19 @@ function makeEntity(tableName) {
 // ---------------------------------------------------------------------------
 
 export const entities = {
-  Property:           makeEntity('properties'),
-  Unit:               makeEntity('units'),
-  Tenant:             makeEntity('tenants'),
-  Payment:            makeEntity('payments'),
+  Property: makeEntity('properties'),
+  Unit: makeEntity('units'),
+  Tenant: makeEntity('tenants'),
+  Payment: makeEntity('payments'),
   MaintenanceRequest: makeEntity('maintenance_requests'),
-  Lease:              makeEntity('leases'),
-  Invoice:            makeEntity('invoices'),
+  Lease: makeEntity('leases'),
+  Invoice: makeEntity('invoices'),
+  Invitation: makeEntity('invitations'),
+  Receipt: makeEntity('receipts'),
+  TenantDeposit: makeEntity('tenant_deposits'),
+  VacateNotice: makeEntity('vacate_notices'),
+  Eviction: makeEntity('evictions'),
+  PropertyAccount: makeEntity('property_accounts'),
 };
 
 // ---------------------------------------------------------------------------
@@ -133,7 +139,7 @@ export const auth = {
       .from('profiles')
       .select('*')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
     throwIf(profileErr);
 
     // Return a merged object that looks like the old base44 user shape
@@ -149,6 +155,60 @@ export const auth = {
 };
 
 // ---------------------------------------------------------------------------
+// Settlement Recalculator — single source of truth for invoice status.
+// Call this after ANY payment is verified. It sums all Verified payments
+// for the invoice and sets amount_paid + status accordingly.
+// Verification ≠ paid-in-full: the system decides that independently.
+// ---------------------------------------------------------------------------
+export async function recalculateInvoiceSettlement(invoiceId) {
+  if (!invoiceId) return;
+
+  // Fetch the invoice
+  const { data: inv, error: invErr } = await supabase
+    .from("invoices")
+    .select("*")
+    .eq("id", invoiceId)
+    .maybeSingle();
+  if (invErr || !inv) return;
+
+  // Sum only Verified payments linked to this invoice
+  let payQuery = supabase
+    .from("payments")
+    .select("amount")
+    .eq("status", "Verified");
+
+  if (inv.invoice_number) {
+    payQuery = payQuery.eq("invoice_number", inv.invoice_number);
+  } else {
+    payQuery = payQuery
+      .eq("unit_id", inv.unit_id)
+      .eq("tenant_id", inv.tenant_id)
+      .eq("month_for", inv.month_for);
+  }
+
+  const { data: verifiedPayments, error: payErr } = await payQuery;
+  if (payErr) return;
+
+  const totalVerified = (verifiedPayments || []).reduce(
+    (sum, p) => sum + (p.amount || 0),
+    0
+  );
+
+  // Determine status from verified total vs invoice principal
+  const newStatus =
+    totalVerified >= inv.total
+      ? "Paid"
+      : totalVerified > 0
+      ? "Partially Paid"
+      : "Unpaid";
+
+  await supabase
+    .from("invoices")
+    .update({ amount_paid: totalVerified, status: newStatus })
+    .eq("id", inv.id);
+}
+
+// ---------------------------------------------------------------------------
 // Integrations — stubs for email & file upload
 // (wire up Supabase Edge Functions / Storage when ready)
 // ---------------------------------------------------------------------------
@@ -162,8 +222,27 @@ export const integrations = {
 
     /** TODO: replace with Supabase Storage upload */
     async UploadFile({ file }) {
-      console.warn('[integrations.Core.UploadFile] File upload not yet wired up.', file?.name);
-      return { url: null };
+      if (!file) return { url: null, file_url: null };
+      try {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Math.random().toString(36).substring(2)}_${Date.now()}.${fileExt}`;
+        const filePath = `uploads/${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from('properties')
+          .upload(filePath, file);
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('properties')
+          .getPublicUrl(filePath);
+
+        return { url: publicUrl, file_url: publicUrl };
+      } catch (err) {
+        console.error('File upload error:', err);
+        throw err;
+      }
     },
   },
 };

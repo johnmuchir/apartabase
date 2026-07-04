@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { entities } from "@/api/supabaseClient";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -20,23 +21,82 @@ function getMonthOptions() {
 
 const quickItems = ["Water", "Garbage", "Electricity"];
 
-export default function InvoiceForm({ open, onOpenChange, units, leases, tenants, onCreated }) {
+export default function InvoiceForm({ open, onOpenChange, units, leases, tenants, onCreated, invoiceToEdit }) {
   const { toast } = useToast();
-  const [form, setForm] = useState({ unit_id: "", month_for: "", due_date: "" });
+  const currentMonth = new Date().toLocaleString("en", { month: "long", year: "numeric" });
+  const [form, setForm] = useState({ unit_id: "", month_for: currentMonth, due_date: "" });
   const [items, setItems] = useState([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
-      setForm({ unit_id: "", month_for: "", due_date: "" });
-      setItems([]);
+      if (invoiceToEdit) {
+        setForm({
+          unit_id: invoiceToEdit.unit_id,
+          month_for: invoiceToEdit.month_for,
+          due_date: invoiceToEdit.due_date || "",
+        });
+        setItems(
+          (invoiceToEdit.items || []).map((it) => ({
+            description: it.description,
+            amount: it.amount.toString(),
+          }))
+        );
+      } else {
+        setForm({ unit_id: "", month_for: currentMonth, due_date: "" });
+        setItems([]);
+      }
     }
-  }, [open]);
+  }, [open, invoiceToEdit]);
 
-  const selectedUnit = units.find((u) => u.id === form.unit_id);
-  const lease = leases.find((l) => l.unit_id === form.unit_id);
+  const selectedUnit = units.find((u) => u.id === form.unit_id) || (invoiceToEdit ? {
+    id: invoiceToEdit.unit_id,
+    unit_number: invoiceToEdit.unit_number,
+    tenant_name: invoiceToEdit.tenant_name,
+    property_id: invoiceToEdit.property_id,
+    property_name: invoiceToEdit.property_name,
+    tenant_id: invoiceToEdit.tenant_id
+  } : null);
+
+  const lease = leases.find((l) => l.unit_id === form.unit_id) || (invoiceToEdit ? {
+    id: invoiceToEdit.lease_id,
+    monthly_rent: invoiceToEdit.base_rent
+  } : null);
+
   const tenant = tenants.find((t) => t.id === selectedUnit?.tenant_id);
-  const baseRent = lease?.monthly_rent || 0;
+  const baseRent = invoiceToEdit ? invoiceToEdit.base_rent : (lease?.monthly_rent || 0);
+
+  useEffect(() => {
+    if (form.unit_id && lease && !invoiceToEdit) {
+      checkIfFirstInvoice();
+    }
+  }, [form.unit_id, lease, invoiceToEdit]);
+
+  const checkIfFirstInvoice = async () => {
+    try {
+      const { count, error } = await supabase
+        .from("invoices")
+        .select("id", { count: "exact", head: true })
+        .eq("lease_id", lease.id);
+
+      if (!error) {
+        if (count === 0 && lease.deposit > 0) {
+          setItems((prev) => {
+            const hasDeposit = prev.some(it => it.description.toLowerCase().includes("deposit"));
+            if (!hasDeposit) {
+              return [...prev, { description: "Security Deposit", amount: lease.deposit.toString() }];
+            }
+            return prev;
+          });
+        } else {
+          setItems((prev) => prev.filter(it => it.description !== "Security Deposit"));
+        }
+      }
+    } catch (e) {
+      console.error("Error checking invoice history:", e);
+    }
+  };
+
   const itemsTotal = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
   const total = baseRent + itemsTotal;
 
@@ -52,12 +112,13 @@ export default function InvoiceForm({ open, onOpenChange, units, leases, tenants
       const cleanItems = items
         .filter((i) => i.description.trim() && (parseFloat(i.amount) || 0) > 0)
         .map((i) => ({ description: i.description.trim(), amount: parseFloat(i.amount) }));
-      await entities.Invoice.create({
+
+      const payload = {
         lease_id: lease.id,
         unit_id: selectedUnit.id,
         property_id: selectedUnit.property_id,
         tenant_id: selectedUnit.tenant_id || "",
-        tenant_name: tenant?.full_name || "",
+        tenant_name: tenant?.full_name || selectedUnit?.tenant_name || "",
         unit_number: selectedUnit.unit_number || "",
         property_name: selectedUnit.property_name || "",
         month_for: form.month_for,
@@ -65,13 +126,34 @@ export default function InvoiceForm({ open, onOpenChange, units, leases, tenants
         base_rent: baseRent,
         items: cleanItems,
         total,
-        status: "Unpaid",
-      });
-      toast({ title: "Invoice generated!" });
+      };
+
+      if (invoiceToEdit) {
+        const amtPaid = invoiceToEdit.amount_paid || 0;
+        const newStatus = amtPaid >= total 
+          ? "Paid" 
+          : amtPaid > 0 
+          ? "Partially Paid" 
+          : invoiceToEdit.status;
+
+        await entities.Invoice.update(invoiceToEdit.id, {
+          ...payload,
+          status: newStatus
+        });
+        toast({ title: "Invoice updated successfully!" });
+      } else {
+        await entities.Invoice.create({
+          ...payload,
+          status: "Unpaid",
+          amount_paid: 0
+        });
+        toast({ title: "Invoice generated successfully!" });
+      }
+      
       onOpenChange(false);
       onCreated?.();
     } catch (e) {
-      toast({ title: "Error", variant: "destructive" });
+      toast({ title: "Error", description: e.message || "Failed to save invoice", variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -80,33 +162,44 @@ export default function InvoiceForm({ open, onOpenChange, units, leases, tenants
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm mx-auto max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>Generate Invoice</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>{invoiceToEdit ? "Edit Invoice" : "Generate Invoice"}</DialogTitle>
+        </DialogHeader>
         <div className="space-y-4 pt-2">
           <div>
             <Label>Unit *</Label>
-            <Select value={form.unit_id} onValueChange={(v) => setForm({ ...form, unit_id: v })}>
+            <Select disabled={!!invoiceToEdit} value={form.unit_id} onValueChange={(v) => setForm({ ...form, unit_id: v })}>
               <SelectTrigger><SelectValue placeholder="Select occupied unit" /></SelectTrigger>
               <SelectContent>
-                {units.map((u) => (
-                  <SelectItem key={u.id} value={u.id}>
-                    {u.unit_number} — {u.tenant_name || "Tenant"}
+                {invoiceToEdit ? (
+                  <SelectItem value={invoiceToEdit.unit_id}>
+                    {invoiceToEdit.unit_number} — {invoiceToEdit.tenant_name || "Tenant"}
                   </SelectItem>
-                ))}
+                ) : (
+                  units.map((u) => (
+                    <SelectItem key={u.id} value={u.id}>
+                      {u.unit_number} — {u.tenant_name || "Tenant"}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
-            {units.length === 0 && (
-              <p className="text-[11px] text-muted-foreground mt-1">No occupied units with an active lease.</p>
-            )}
           </div>
+          
           <div>
             <Label>Month For *</Label>
-            <Select value={form.month_for} onValueChange={(v) => setForm({ ...form, month_for: v })}>
+            <Select disabled={!!invoiceToEdit} value={form.month_for} onValueChange={(v) => setForm({ ...form, month_for: v })}>
               <SelectTrigger><SelectValue placeholder="Select month" /></SelectTrigger>
               <SelectContent>
-                {getMonthOptions().map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                {invoiceToEdit ? (
+                  <SelectItem value={invoiceToEdit.month_for}>{invoiceToEdit.month_for}</SelectItem>
+                ) : (
+                  getMonthOptions().map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)
+                )}
               </SelectContent>
             </Select>
           </div>
+
           <div>
             <Label>Due Date</Label>
             <Input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
@@ -154,7 +247,7 @@ export default function InvoiceForm({ open, onOpenChange, units, leases, tenants
           )}
 
           <Button onClick={handleSubmit} disabled={saving || !form.unit_id || !form.month_for} className="w-full h-12">
-            {saving ? "Saving..." : "Generate Invoice"}
+            {saving ? "Saving..." : invoiceToEdit ? "Update Invoice" : "Generate Invoice"}
           </Button>
         </div>
       </DialogContent>
