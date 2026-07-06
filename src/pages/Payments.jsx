@@ -42,7 +42,8 @@ export default function Payments() {
     const [showForm, setShowForm] = useState(false);
     const [search, setSearch] = useState("");
     const [form, setForm] = useState({
-        tenant_id: "", amount: "", payment_date: new Date().toISOString().split("T")[0],
+        tenant_id: "", amount: "", deposit_portion: "0",
+        payment_date: new Date().toISOString().split("T")[0],
         payment_method: "M-Pesa", month_for: "", reference: "", notes: "",
     });
     const [saving, setSaving] = useState(false);
@@ -86,6 +87,7 @@ export default function Payments() {
         setSaving(true);
         try {
             const tenant = tenants.find((t) => t.id === form.tenant_id);
+            const depositPortion = Math.min(parseInt(form.deposit_portion) || 0, parseInt(form.amount) || 0);
             const created = await entities.Payment.create({
                 tenant_id: form.tenant_id,
                 tenant_name: tenant?.full_name || "",
@@ -94,6 +96,7 @@ export default function Payments() {
                 property_id: tenant?.property_id || "",
                 property_name: tenant?.property_name || "",
                 amount: parseInt(form.amount),
+                deposit_portion: depositPortion,
                 payment_date: form.payment_date,
                 payment_method: form.payment_method,
                 month_for: form.month_for,
@@ -115,7 +118,8 @@ export default function Payments() {
             toast({ title: "Payment recorded — alert sent!" });
             setShowForm(false);
             setForm({
-                tenant_id: "", amount: "", payment_date: new Date().toISOString().split("T")[0],
+                tenant_id: "", amount: "", deposit_portion: "0",
+                payment_date: new Date().toISOString().split("T")[0],
                 payment_method: "M-Pesa", month_for: "", reference: "", notes: "",
             });
             setLoading(true);
@@ -173,7 +177,7 @@ export default function Payments() {
                     amount_refunds: summary.refundsTotal,
                     amount_net: summary.net,
                     notes: releaseNotes || "Funds released for property account",
-                    status: "Paid"
+                    status: "Pending"
                 })
                 .select()
                 .single();
@@ -195,7 +199,6 @@ export default function Payments() {
             setReleaseNotes("");
             loadData();
         } catch (err) {
-            console.error(err);
             toast({ title: "Failed to release property account funds", description: err.message, variant: "destructive" });
         } finally { setReleasing(false); }
     };
@@ -203,34 +206,25 @@ export default function Payments() {
     const getPendingAccounts = () => {
         const summaries = [];
         properties.forEach((prop) => {
-            // Find active/inactive tenants in this property
-            const propTenants = tenants.filter((t) => t.property_id === prop.id || t.property_name === prop.name);
-            const tenantIds = propTenants.map((t) => t.id);
-
-            // Reconcile verified payments with no release_id
+            // Verified payments for this property not yet reconciled
             const propPayments = payments.filter((p) => p.status === "Verified" && !p.account_release_id && p.property_id === prop.id);
             const gross = propPayments.reduce((s, p) => s + (p.amount || 0), 0);
 
-            // Reconcile new deposit collections (status = 'Held' and no account_release_id)
-            const propDepositsCollected = tenantDeposits.filter((d) => {
-                if (d.status !== "Held" || d.account_release_id) return false;
-                const inv = invoices.find((i) => i.id === d.invoice_id);
-                return inv && inv.property_id === prop.id;
-            });
-            const depositsCollectedTotal = propDepositsCollected.reduce((s, d) => s + (d.amount_paid || 0), 0);
+            // Deposit portion is now stored directly on the payment record
+            const depositsCollectedTotal = propPayments.reduce((s, p) => s + (p.deposit_portion || 0), 0);
 
-            // Gross monthly rent collections (Rent portion only) = gross collections - deposit collections
+            // Gross rent = total cash collected minus deposit portions
             const grossRentPortion = Math.max(0, gross - depositsCollectedTotal);
 
-            // Reconcile commission calculated ONLY on the gross rent portion
+            // Commission calculated ONLY on the rent portion
             let commission = 0;
             if (prop.commission_type === "percentage") {
                 commission = grossRentPortion * ((prop.commission_rate || 0) / 100);
             } else {
-                commission = prop.commission_rate || 0;
+                commission = gross > 0 ? (prop.commission_rate || 0) : 0;
             }
 
-            // Reconcile refunded deposits (status = 'Refunded' and no account_release_id)
+            // Refunded deposits from tenant deposits ledger (pulled separately from rent)
             const propRefunds = tenantDeposits.filter((d) => {
                 if (d.status !== "Refunded" || d.account_release_id) return false;
                 const inv = invoices.find((i) => i.id === d.invoice_id);
@@ -238,17 +232,17 @@ export default function Payments() {
             });
             const refundsTotal = propRefunds.reduce((s, r) => s + (r.amount_paid || 0), 0);
 
-            // Net Release Statement Funds Due = Gross collections - Commission - Refunds
+            // Net = gross cash - commission - refunds (deposits held separately, not deducted from landlord payout)
             const net = Math.max(0, gross - commission - refundsTotal);
 
             if (gross > 0 || refundsTotal > 0) {
                 summaries.push({
                     property: prop,
                     payments: propPayments,
-                    newDeposits: propDepositsCollected,
                     refunds: propRefunds,
                     gross,
                     grossRent: grossRentPortion,
+                    depositsCollected: depositsCollectedTotal,
                     commission,
                     refundsTotal,
                     net,
@@ -446,9 +440,23 @@ export default function Payments() {
                             </Select>
                         </div>
                         <div>
-                            <Label>Amount (KES) *</Label>
+                            <Label>Total Amount Paid (KES) *</Label>
                             <Input type="number" placeholder="e.g. 25000" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
                             {selectedTenant?.monthly_rent > 0 && <p className="text-[11px] text-muted-foreground mt-1">Rent: KES {selectedTenant.monthly_rent.toLocaleString()}/mo</p>}
+                        </div>
+                        <div>
+                            <Label>Deposit Portion (KES)</Label>
+                            <Input
+                                type="number"
+                                placeholder="0 if rent only"
+                                value={form.deposit_portion}
+                                onChange={(e) => setForm({ ...form, deposit_portion: e.target.value })}
+                            />
+                            <p className="text-[11px] text-muted-foreground mt-1">
+                                Rent portion: KES {Math.max(0, (parseInt(form.amount) || 0) - (parseInt(form.deposit_portion) || 0)).toLocaleString()}
+                                {" · "}
+                                Commission base
+                            </p>
                         </div>
                         <div>
                             <Label>Month For *</Label>
@@ -502,7 +510,7 @@ export default function Payments() {
                             <div className="text-xs bg-muted/40 rounded-xl p-3.5 border border-border/30 space-y-1.5 font-sans">
                                 <div className="flex justify-between"><span className="text-muted-foreground">Property Name</span><span className="font-semibold text-foreground">{selectedPropAccount.property.name}</span></div>
                                 <div className="flex justify-between"><span className="text-muted-foreground">Total Cash Collected</span><span className="font-semibold text-foreground">{formatKES(selectedPropAccount.gross)}</span></div>
-                                <div className="flex justify-between text-[11px] text-muted-foreground/80 pl-2"><span>— Less: Deposit Collections (Held)</span><span>-{formatKES(selectedPropAccount.gross - selectedPropAccount.grossRent)}</span></div>
+                                <div className="flex justify-between text-[11px] text-muted-foreground/80 pl-2"><span>— Less: Deposit Collections (Held)</span><span>-{formatKES(selectedPropAccount.depositsCollected)}</span></div>
                                 <div className="flex justify-between font-medium border-t border-border/20 pt-1.5"><span className="text-muted-foreground">Gross Rent Subject to Comm.</span><span className="text-foreground">{formatKES(selectedPropAccount.grossRent)}</span></div>
                                 <div className="flex justify-between"><span className="text-muted-foreground">Less: Agent Commission</span><span className="font-semibold text-red-600">-{formatKES(selectedPropAccount.commission)}</span></div>
                                 <div className="flex justify-between"><span className="text-muted-foreground">Less: Refunded Deposits</span><span className="font-semibold text-red-600">-{formatKES(selectedPropAccount.refundsTotal)}</span></div>

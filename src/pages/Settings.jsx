@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
-import { User, Phone, Mail, Shield, ArrowLeft, Loader2 } from "lucide-react";
+import { User, Phone, Mail, Shield, ArrowLeft, Loader2, Landmark, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,12 +14,25 @@ export default function Settings() {
   
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
+  
+  // Agent payment details
+  const [mpesaNumber, setMpesaNumber] = useState("");
+  const [bankName, setBankName] = useState("");
+  const [bankAccount, setBankAccount] = useState("");
+  const [bankPaybill, setBankPaybill] = useState("");
+  
   const [saving, setSaving] = useState(false);
+
+  const isAgent = profile?.role === "agent";
 
   useEffect(() => {
     if (profile) {
       setFullName(profile.full_name || "");
       setPhone(profile.phone || "");
+      setMpesaNumber(profile.mpesa_number || "");
+      setBankName(profile.bank_name || "");
+      setBankAccount(profile.bank_account || "");
+      setBankPaybill(profile.bank_paybill || "");
     }
   }, [profile]);
 
@@ -31,12 +44,21 @@ export default function Settings() {
     }
     setSaving(true);
     try {
+      const updates = {
+        full_name: fullName.trim(),
+        phone: phone.trim(),
+      };
+
+      if (isAgent) {
+        updates.mpesa_number = mpesaNumber.trim();
+        updates.bank_name = bankName.trim();
+        updates.bank_account = bankAccount.trim();
+        updates.bank_paybill = bankPaybill.trim();
+      }
+
       const { error } = await supabase
         .from("profiles")
-        .update({
-          full_name: fullName.trim(),
-          phone: phone.trim(),
-        })
+        .update(updates)
         .eq("id", user.id);
 
       if (error) throw error;
@@ -85,6 +107,66 @@ export default function Settings() {
               required
             />
           </div>
+
+          {isAgent && (
+            <div className="border-t border-border pt-4 mt-4 space-y-4">
+              <h4 className="text-sm font-bold flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-primary" /> Payout / Receiving Details
+              </h4>
+              <p className="text-[11px] text-muted-foreground">
+                These payment details will be visible to landlords when making payouts to you for commissions, deposits, or repairs.
+              </p>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="mpesa-number" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  <Smartphone className="w-3.5 h-3.5" /> Receiving M-Pesa Number
+                </Label>
+                <Input
+                  id="mpesa-number"
+                  placeholder="e.g. 0712345678"
+                  value={mpesaNumber}
+                  onChange={(e) => setMpesaNumber(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="bank-name" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Bank Name
+                  </Label>
+                  <Input
+                    id="bank-name"
+                    placeholder="e.g. Equity Bank"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="bank-paybill" className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                    Bank Paybill (If any)
+                  </Label>
+                  <Input
+                    id="bank-paybill"
+                    placeholder="e.g. 247247"
+                    value={bankPaybill}
+                    onChange={(e) => setBankPaybill(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="bank-account" className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  Bank Account Number
+                </Label>
+                <Input
+                  id="bank-account"
+                  placeholder="e.g. 1234567890123"
+                  value={bankAccount}
+                  onChange={(e) => setBankAccount(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide">

@@ -25,13 +25,13 @@ export default function Notices() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState("vacate"); // "vacate" | "evictions" | "reminders"
-  
+
   // States
   const [vacateNotices, setVacateNotices] = useState([]);
   const [evictions, setEvictions] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [tenants, setTenants] = useState([]);
-  
+
   // Reminders states
   const [sendingReminders, setSendingReminders] = useState(false);
 
@@ -97,7 +97,7 @@ export default function Notices() {
     setProcessingVacate(true);
     try {
       const notice = selectedNoticeForMoveout;
-      
+
       // Fetch unit_id directly from the tenants table (guarantees robust unit clearing even if lease is null)
       const { data: tenantData, error: tenantErr } = await supabase
         .from("tenants")
@@ -249,9 +249,8 @@ export default function Notices() {
         <div className="flex bg-muted/80 p-1 rounded-xl gap-1">
           <button
             onClick={() => setActiveTab("vacate")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all relative ${
-              activeTab === "vacate" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all relative ${activeTab === "vacate" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
           >
             Vacate Notices
             {pendingVacatesCount > 0 && (
@@ -262,17 +261,15 @@ export default function Notices() {
           </button>
           <button
             onClick={() => setActiveTab("evictions")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === "evictions" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${activeTab === "evictions" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
           >
             Evictions
           </button>
           <button
             onClick={() => setActiveTab("reminders")}
-            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
-              activeTab === "reminders" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            }`}
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${activeTab === "reminders" ? "bg-white text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              }`}
           >
             Rent Reminders
             {remindersDue.length > 0 && (
@@ -308,15 +305,14 @@ export default function Notices() {
                               Unit {tenant?.unit_number || "—"} · {tenant?.property_name || "—"}
                             </p>
                           </div>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                            n.status === "Approved"
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${n.status === "Approved"
                               ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
                               : n.status === "Pending"
-                              ? "bg-amber-50 text-amber-700 border border-amber-100"
-                              : n.status === "Completed"
-                              ? "bg-gray-100 text-gray-500"
-                              : "bg-red-50 text-red-700 border border-red-100"
-                          }`}>
+                                ? "bg-amber-50 text-amber-700 border border-amber-100"
+                                : n.status === "Completed"
+                                  ? "bg-gray-100 text-gray-500"
+                                  : "bg-red-50 text-red-700 border border-red-100"
+                            }`}>
                             {n.status}
                           </span>
                         </div>
@@ -371,13 +367,12 @@ export default function Notices() {
                               Unit {tenant?.unit_number || "—"} · {tenant?.property_name || "—"}
                             </p>
                           </div>
-                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${
-                            e.status === "Issued"
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ${e.status === "Issued"
                               ? "bg-red-50 text-red-700 border border-red-100"
                               : e.status === "Enforced"
-                              ? "bg-gray-100 text-gray-500"
-                              : "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                          }`}>
+                                ? "bg-gray-100 text-gray-500"
+                                : "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                            }`}>
                             {e.status}
                           </span>
                         </div>
@@ -475,9 +470,8 @@ export default function Notices() {
                             </div>
                             <div className="text-right shrink-0">
                               <p className="font-bold text-foreground">{formatKES(inv.total)}</p>
-                              <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5 ${
-                                overdue ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"
-                              }`}>
+                              <span className={`inline-block text-[9px] font-bold px-2 py-0.5 rounded-full mt-1.5 ${overdue ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"
+                                }`}>
                                 {overdue ? "Overdue" : `Due in ${d} days`}
                               </span>
                             </div>

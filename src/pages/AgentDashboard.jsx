@@ -94,11 +94,6 @@ export default function AgentDashboard() {
       <PageHeader
         title="Agent Overview"
         subtitle="Managing all landlord properties"
-        action={
-          <button onClick={handleLogout} className="p-2 rounded-lg hover:bg-white/10 transition-colors">
-            <LogOut className="w-5 h-5" />
-          </button>
-        }
       />
 
       <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
@@ -223,20 +218,25 @@ export default function AgentDashboard() {
           )}
         </div>
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-3">
           <Link to="/properties">
-            <Button variant="outline" className="w-full h-12 text-xs font-medium px-2">
-              <Building2 className="w-3.5 h-3.5 mr-1" /> Properties
+            <Button variant="outline" className="w-full h-12 text-xs font-medium">
+              <Building2 className="w-4 h-4 mr-2" /> Properties
             </Button>
           </Link>
           <Link to="/payments">
-            <Button className="w-full h-12 text-xs font-medium px-2">
-              <CreditCard className="w-3.5 h-3.5 mr-1" /> Record Pay
+            <Button className="w-full h-12 text-xs font-medium">
+              <CreditCard className="w-4 h-4 mr-2" /> Payments
+            </Button>
+          </Link>
+          <Link to="/payouts">
+            <Button variant="secondary" className="w-full h-12 text-xs font-medium">
+              <Wallet className="w-4 h-4 mr-2" /> Payouts
             </Button>
           </Link>
           <Link to="/invitations">
-            <Button variant="secondary" className="w-full h-12 text-xs font-medium px-2">
-              <Mail className="w-3.5 h-3.5 mr-1" /> Invites
+            <Button variant="outline" className="w-full h-12 text-xs font-medium">
+              <Mail className="w-4 h-4 mr-2" /> Invites
             </Button>
           </Link>
         </div>

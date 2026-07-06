@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from "react";
 import { entities } from "@/api/supabaseClient";
-import { Plus, Users, Search, Phone, DoorOpen, Wallet, ChevronDown, ChevronUp } from "lucide-react";
+import { supabase } from "@/lib/supabase";
+import { useAuth } from "@/lib/AuthContext";
+import { Plus, Users, Search, Phone, DoorOpen, Wallet, ChevronDown, ChevronUp, CheckCircle2, Clock, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,11 +14,16 @@ import LoadingSpinner from "@/components/shared/LoadingSpinner";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function Tenants() {
+  const { profile, demoRole } = useAuth();
+  const isAgent = demoRole === "agent" || profile?.role === "agent";
+
   const [tenants, setTenants] = useState([]);
   const [properties, setProperties] = useState([]);
   const [units, setUnits] = useState([]);
   const [deposits, setDeposits] = useState([]);
+  const [payouts, setPayouts] = useState([]);
   const [expandedTenantIds, setExpandedTenantIds] = useState(new Set());
+  const [confirmDeleteTenant, setConfirmDeleteTenant] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [search, setSearch] = useState("");
@@ -31,18 +38,81 @@ export default function Tenants() {
 
   const loadData = async () => {
     try {
-      const [t, p, u, d] = await Promise.all([
+      const [t, p, u, d, payoutList] = await Promise.all([
         entities.Tenant.list("-created_date"),
         entities.Property.list(),
         entities.Unit.list(),
         entities.TenantDeposit.list(),
+        entities.LandlordPayout.list(),
       ]);
       setTenants(t);
       setProperties(p);
       setUnits(u);
       setDeposits(d || []);
+      setPayouts(payoutList || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+  };
+
+  const handleVerifyDepositRefund = async (depId) => {
+    try {
+      await supabase.from("tenant_deposits").update({ status: "Refunded" }).eq("id", depId);
+      toast({ title: "Refund verified as paid to tenant!" });
+      loadData();
+    } catch (e) {
+      toast({ title: "Failed to verify refund", variant: "destructive" });
+    }
+  };
+
+  const getMonthsDormant = (leaseEnd) => {
+    if (!leaseEnd) return 0;
+    const end = new Date(leaseEnd);
+    const now = new Date();
+    const diffTime = Math.abs(now - end);
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays / 30;
+  };
+
+  const isDormantThreeMonths = (t) => {
+    if (t.status !== "Inactive" || !t.lease_end) return false;
+    return getMonthsDormant(t.lease_end) >= 3;
+  };
+
+  const handleDeleteTenantData = async (tenantId) => {
+    setSaving(true);
+    try {
+      // 1. Delete associated payments
+      await supabase.from("payments").delete().eq("tenant_id", tenantId);
+      
+      // 2. Delete associated invoices
+      await supabase.from("invoices").delete().eq("tenant_id", tenantId);
+
+      // 3. Delete associated tenant_deposits
+      await supabase.from("tenant_deposits").delete().eq("tenant_id", tenantId);
+
+      // 4. Delete associated vacate notices
+      await supabase.from("vacate_notices").delete().eq("tenant_id", tenantId);
+
+      // 5. Delete associated evictions
+      await supabase.from("evictions").delete().eq("tenant_id", tenantId);
+
+      // 6. Delete associated maintenance requests
+      await supabase.from("maintenance_requests").delete().eq("tenant_id", tenantId);
+
+      // 7. Delete associated leases
+      await supabase.from("leases").delete().eq("tenant_id", tenantId);
+
+      // 8. Delete the tenant record itself
+      await supabase.from("tenants").delete().eq("id", tenantId);
+
+      toast({ title: "Tenant and all associated data permanently deleted!" });
+      setConfirmDeleteTenant(null);
+      loadData();
+    } catch (err) {
+      toast({ title: "Deletion failed", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const toggleExpandTenant = (id) => {
@@ -136,6 +206,16 @@ export default function Tenants() {
                         {t.unit_number} · {t.property_name}
                       </span>
                     </div>
+                    {t.status === "Inactive" && t.lease_end && (
+                      <div className="text-[10px] text-muted-foreground mt-1">
+                        Checked out: <span className="font-semibold">{t.lease_end}</span>
+                        {isDormantThreeMonths(t) ? (
+                          <span className="text-red-600 font-semibold ml-1.5">(Dormant &gt;3 months)</span>
+                        ) : (
+                          <span className="italic ml-1.5">({Math.floor(getMonthsDormant(t.lease_end) * 10) / 10} mo dormant)</span>
+                        )}
+                      </div>
+                    )}
                     <button
                       onClick={() => toggleExpandTenant(t.id)}
                       className="text-[10px] text-muted-foreground hover:text-foreground font-semibold flex items-center gap-1 mt-2.5 transition-colors"
@@ -155,6 +235,17 @@ export default function Tenants() {
                     </span>
                     {t.monthly_rent > 0 && (
                       <p className="text-xs text-muted-foreground mt-1">KES {t.monthly_rent?.toLocaleString()}/mo</p>
+                    )}
+                    {isDormantThreeMonths(t) && isAgent && (
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        onClick={() => setConfirmDeleteTenant(t)}
+                        className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive shrink-0 mt-2 block ml-auto"
+                        title="Delete dormant tenant and all data"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     )}
                   </div>
                 </div>
@@ -184,26 +275,64 @@ export default function Tenants() {
                         <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
                           <Wallet className="w-3 h-3 text-primary" /> Refundable Deposits
                         </p>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-2">
                           {deposits
                             .filter((d) => d.tenant_id === t.id)
-                            .map((dep) => (
-                              <div key={dep.id} className="bg-muted/40 p-2.5 rounded-lg border border-border/30 flex items-center justify-between text-[11px]">
-                                <span className="text-muted-foreground truncate mr-2">{dep.deposit_type}</span>
-                                <div className="text-right shrink-0">
-                                  <span className="font-semibold text-foreground">KES {dep.amount_paid.toLocaleString()}</span>
-                                  <span className={`inline-block text-[9px] font-medium ml-1.5 px-1.5 py-0.5 rounded-full ${
-                                    dep.status === "Held"
-                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
-                                      : dep.status === "Refunded"
-                                      ? "bg-indigo-50 text-indigo-700 border border-indigo-100"
-                                      : "bg-amber-50 text-amber-700 border border-amber-100"
-                                  }`}>
-                                    {dep.status}
-                                  </span>
+                            .map((dep) => {
+                              const linkedPayout = payouts.find((p) => p.id === dep.payout_id || p.linked_deposit_id === dep.id);
+                              const canVerify = dep.status === "Pending" && linkedPayout?.status === "Confirmed" && isAgent;
+
+                              return (
+                                <div key={dep.id} className="bg-muted/40 p-3 rounded-xl border border-border/30 flex flex-col gap-2 text-[11px]">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-muted-foreground truncate font-medium">{dep.deposit_type}</span>
+                                    <div className="shrink-0 flex items-center gap-2">
+                                      <span className="font-semibold text-foreground">KES {dep.amount_paid.toLocaleString()}</span>
+                                      <span className={`inline-block text-[9px] font-semibold px-2 py-0.5 rounded-full ${
+                                        dep.status === "Held"
+                                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                          : dep.status === "Refunded"
+                                          ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
+                                          : "bg-amber-50 text-amber-700 border border-amber-200"
+                                      }`}>
+                                        {dep.status}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  {/* If Pending, show payout reference status and verification button */}
+                                  {dep.status === "Pending" && (
+                                    <div className="flex items-center justify-between bg-muted/60 p-2 rounded-lg border border-border/20 mt-1">
+                                      <div className="text-[10px] text-muted-foreground">
+                                        {linkedPayout ? (
+                                          linkedPayout.status === "Confirmed" ? (
+                                            <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                                              <CheckCircle2 className="w-3 h-3" /> Landlord Paid
+                                            </span>
+                                          ) : (
+                                            <span className="text-amber-700 font-semibold flex items-center gap-1">
+                                              <Clock className="w-3 h-3" /> Awaiting Landlord
+                                            </span>
+                                          )
+                                        ) : (
+                                          <span className="italic">No payout request created</span>
+                                        )}
+                                      </div>
+
+                                      {canVerify && (
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleVerifyDepositRefund(dep.id)}
+                                          className="h-6 text-[9px] px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded"
+                                        >
+                                          Confirm Refunded
+                                        </Button>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                         </div>
                       </div>
                     )}
@@ -270,6 +399,44 @@ export default function Tenants() {
             <Button onClick={handleSave} disabled={saving || !form.full_name || !form.phone || !form.property_id || !form.unit_id} className="w-full h-12">
               {saving ? "Saving..." : "Add Tenant"}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={!!confirmDeleteTenant} onOpenChange={(open) => !open && setConfirmDeleteTenant(null)}>
+        <DialogContent className="max-w-sm mx-auto">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <Trash2 className="w-5 h-5 text-red-600" /> Delete Dormant Tenant
+            </DialogTitle>
+            <DialogDescription className="text-xs pt-1">
+              Are you sure you want to permanently delete <strong>{confirmDeleteTenant?.full_name}</strong>?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-[11px] text-red-800 space-y-1.5">
+              <p className="font-semibold">This will permanently delete ALL data relating to this tenant:</p>
+              <ul className="list-disc pl-4 space-y-0.5">
+                <li>Leases & Inspection Records</li>
+                <li>Monthly Invoices & Damages Invoices</li>
+                <li>Rent Payments & Deposit Offsets</li>
+                <li>Security Deposit Ledgers</li>
+                <li>Maintenance Requests & Vacate Notices</li>
+              </ul>
+              <p className="font-medium pt-1">This action is irreversible.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => setConfirmDeleteTenant(null)} className="w-1/2 h-10 text-xs">
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => handleDeleteTenantData(confirmDeleteTenant.id)}
+                disabled={saving}
+                className="w-1/2 h-10 text-xs font-semibold bg-red-600 hover:bg-red-700"
+              >
+                {saving ? "Deleting..." : "Delete Permanently"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

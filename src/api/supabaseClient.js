@@ -123,6 +123,7 @@ export const entities = {
   VacateNotice: makeEntity('vacate_notices'),
   Eviction: makeEntity('evictions'),
   PropertyAccount: makeEntity('property_accounts'),
+  LandlordPayout: makeEntity('landlord_payouts'),
 };
 
 // ---------------------------------------------------------------------------

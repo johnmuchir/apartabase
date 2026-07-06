@@ -29,6 +29,7 @@ import AgentMaintenance from "@/pages/AgentMaintenance";
 import Notices from "@/pages/Notices";
 import Invitations from "@/pages/Invitations";
 import Settings from "@/pages/Settings";
+import Payouts from "@/pages/Payouts";
 
 // Tenant Pages
 import TenantUnit from "@/pages/TenantUnit";
@@ -77,6 +78,7 @@ export default function App() {
           <Route path="/notices" element={<Notices />} />
           <Route path="/invitations" element={<Invitations />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/payouts" element={<Payouts />} />
 
           {/* Tenant Routes */}
           <Route path="/tenant/unit" element={<TenantUnit />} />

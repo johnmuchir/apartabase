@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { FileText, FileCheck, LogOut, Calendar, Plus, Loader2, FileDown, AlertCircle } from "lucide-react";
+import { FileText, FileCheck, LogOut, Calendar, Plus, Loader2, FileDown, AlertCircle, Coins, Wrench, ShieldAlert } from "lucide-react";
 import { entities, integrations } from "@/api/supabaseClient";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
@@ -36,6 +36,11 @@ export default function UnitLeaseCard({ unit, leases, onLeaseUpdated, propertyNa
   const [afterFile, setAfterFile] = useState(null);
   const [savingCheckout, setSavingCheckout] = useState(false);
   const [heldDeposits, setHeldDeposits] = useState([]);
+  // Deposit reconciliation state
+  const [unpaidInvoices, setUnpaidInvoices] = useState([]);
+  const [arrearsAllocations, setArrearsAllocations] = useState({});
+  const [damagesAmount, setDamagesAmount] = useState("");
+  const [damagesDescription, setDamagesDescription] = useState("");
 
   // Notices and Evictions state
   const [vacateNotice, setVacateNotice] = useState(null);
@@ -53,6 +58,12 @@ export default function UnitLeaseCard({ unit, leases, onLeaseUpdated, propertyNa
   useEffect(() => {
     if (showCheckout && activeLease?.tenant_id) {
       loadHeldDeposits();
+      loadUnpaidInvoices();
+    } else if (!showCheckout) {
+      // Reset reconciliation state when dialog closes
+      setArrearsAllocations({});
+      setDamagesAmount("");
+      setDamagesDescription("");
     }
   }, [showCheckout, activeLease]);
 
@@ -182,6 +193,26 @@ export default function UnitLeaseCard({ unit, leases, onLeaseUpdated, propertyNa
     }
   };
 
+  const loadUnpaidInvoices = async () => {
+    try {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("id, month_for, total, amount_paid, status, unit_id, unit_number, property_id, property_name, invoice_number")
+        .eq("tenant_id", activeLease.tenant_id)
+        .neq("status", "Paid")
+        .order("due_date", { ascending: true });
+      if (!error) {
+        const invoices = data || [];
+        setUnpaidInvoices(invoices);
+        const initial = {};
+        invoices.forEach((inv) => { initial[inv.id] = ""; });
+        setArrearsAllocations(initial);
+      }
+    } catch (e) {
+      console.error("Error loading unpaid invoices:", e);
+    }
+  };
+
   const loadTenantProfiles = async () => {
     try {
       // Query profiles with tenant role who don't already have an active unit
@@ -303,8 +334,30 @@ export default function UnitLeaseCard({ unit, leases, onLeaseUpdated, propertyNa
     e.preventDefault();
     if (!activeLease) return;
 
+    const totalHeld = heldDeposits.reduce((sum, d) => sum + d.amount_paid, 0);
+    const totalArrearsAllocated = Object.values(arrearsAllocations).reduce((sum, v) => sum + (parseInt(v) || 0), 0);
+    const totalDamages = parseInt(damagesAmount) || 0;
+
+    if (totalArrearsAllocated + totalDamages > totalHeld) {
+      toast({ title: "Validation Error", description: "Deductions cannot exceed total held deposits.", variant: "destructive" });
+      return;
+    }
+
     setSavingCheckout(true);
     try {
+      const checkoutDate = new Date().toISOString().split("T")[0];
+
+      // Fetch tenant details for reference in payment/invoice records
+      const { data: tenantData } = await supabase
+        .from("tenants")
+        .select("full_name, unit_number, property_id, property_name")
+        .eq("id", activeLease.tenant_id)
+        .single();
+      const tenantName = tenantData?.full_name || "";
+      const unitNumber = tenantData?.unit_number || unit.unit_number || "";
+      const propertyId = tenantData?.property_id || unit.property_id;
+      const propertyName = tenantData?.property_name || propertyName || "";
+
       let uploadedAfterUrl = null;
       if (afterFile) {
         const res = await integrations.Core.UploadFile({ file: afterFile });
@@ -317,61 +370,138 @@ export default function UnitLeaseCard({ unit, leases, onLeaseUpdated, propertyNa
         .update({
           status: "Terminated",
           inspection_after_url: uploadedAfterUrl,
-          end_date: new Date().toISOString().split("T")[0],
+          end_date: checkoutDate,
         })
         .eq("id", activeLease.id);
-
       if (leaseError) throw leaseError;
 
       // 2. Inactivate the Tenant profile
-      if (activeLease.tenant_id) {
-        const { error: tenantError } = await supabase
-          .from("tenants")
-          .update({
-            status: "Inactive",
-            lease_end: new Date().toISOString().split("T")[0],
-          })
-          .eq("id", activeLease.tenant_id);
-
-        if (tenantError) throw tenantError;
-      }
+      const { error: tenantError } = await supabase
+        .from("tenants")
+        .update({ status: "Inactive", lease_end: checkoutDate })
+        .eq("id", activeLease.tenant_id);
+      if (tenantError) throw tenantError;
 
       // 3. Reset the Unit back to Vacant
       const { error: unitError } = await supabase
         .from("units")
-        .update({
-          status: "Vacant",
-          tenant_id: null,
-          tenant_name: null,
-          monthly_rent: 0,
-        })
+        .update({ status: "Vacant", tenant_id: null, tenant_name: null, monthly_rent: 0 })
         .eq("id", unit.id);
-
       if (unitError) throw unitError;
 
-      // 4. Update status of held deposits to 'Refunded'
-      if (activeLease.tenant_id) {
-        await supabase
-          .from("tenant_deposits")
-          .update({ status: "Refunded" })
-          .eq("tenant_id", activeLease.tenant_id)
-          .eq("status", "Held");
+      // 4. Process arrears payments (deposit offset)
+      for (const [invoiceId, allocStr] of Object.entries(arrearsAllocations)) {
+        const alloc = parseInt(allocStr) || 0;
+        if (alloc <= 0) continue;
+        const inv = unpaidInvoices.find((i) => i.id === invoiceId);
+        if (!inv) continue;
 
-        // Update active vacate notice to Completed
-        if (vacateNotice) {
-          await supabase
-            .from("vacate_notices")
-            .update({ status: "Completed" })
-            .eq("id", vacateNotice.id);
-        }
+        // Record deposit-offset payment against the invoice
+        const { error: payErr } = await supabase.from("payments").insert({
+          tenant_id: activeLease.tenant_id,
+          tenant_name: tenantName,
+          unit_id: inv.unit_id || unit.id,
+          unit_number: inv.unit_number || unitNumber,
+          property_id: inv.property_id || propertyId,
+          property_name: inv.property_name || propertyName,
+          amount: alloc,
+          payment_date: checkoutDate,
+          payment_method: "Deposit Offset",
+          month_for: inv.month_for,
+          reference: `DEP-ARR-${Date.now().toString().slice(-6)}`,
+          invoice_number: inv.invoice_number,
+          status: "Verified",
+          deposit_portion: alloc,
+          notes: "Settled from security deposit during move-out (arrears)",
+        });
+        if (payErr) throw payErr;
 
-        // Update active eviction notice to Enforced
-        if (activeEviction) {
-          await supabase
-            .from("evictions")
-            .update({ status: "Enforced" })
-            .eq("id", activeEviction.id);
+        // Update invoice amount_paid
+        const newAmountPaid = Math.min(inv.total, (inv.amount_paid || 0) + alloc);
+        const newStatus = newAmountPaid >= inv.total ? "Paid" : "Partially Paid";
+        await supabase.from("invoices").update({ amount_paid: newAmountPaid, status: newStatus }).eq("id", invoiceId);
+      }
+
+      // 5. Process damages deduction
+      if (totalDamages > 0) {
+        const dmgInvoiceNumber = `DMG-${Date.now().toString().slice(-6)}`;
+        const { error: dmgInvErr } = await supabase.from("invoices").insert({
+          lease_id: activeLease.id,
+          unit_id: unit.id,
+          unit_number: unitNumber,
+          property_id: propertyId,
+          property_name: propertyName,
+          tenant_id: activeLease.tenant_id,
+          tenant_name: tenantName,
+          month_for: "Move-out Damages",
+          due_date: checkoutDate,
+          base_rent: 0,
+          items: [{ description: damagesDescription || "Damages found during checkout", amount: totalDamages }],
+          total: totalDamages,
+          amount_paid: totalDamages,
+          status: "Paid",
+          invoice_number: dmgInvoiceNumber,
+        });
+        if (dmgInvErr) throw dmgInvErr;
+
+        const { error: dmgPayErr } = await supabase.from("payments").insert({
+          tenant_id: activeLease.tenant_id,
+          tenant_name: tenantName,
+          unit_id: unit.id,
+          unit_number: unitNumber,
+          property_id: propertyId,
+          property_name: propertyName,
+          amount: totalDamages,
+          payment_date: checkoutDate,
+          payment_method: "Deposit Offset",
+          month_for: "Move-out Damages",
+          reference: `DMG-PAY-${Date.now().toString().slice(-6)}`,
+          invoice_number: dmgInvoiceNumber,
+          status: "Verified",
+          deposit_portion: totalDamages,
+          notes: `Settled from deposit for damages: ${damagesDescription || "Checkout repairs"}`,
+        });
+        if (dmgPayErr) throw dmgPayErr;
+      }
+
+      // 6. Update deposit records — split Applied vs Refunded
+      const totalApplied = totalArrearsAllocated + totalDamages;
+      let remainingToApply = totalApplied;
+      let refundedDepositsSum = 0;
+
+      for (const dep of heldDeposits) {
+        if (remainingToApply <= 0) {
+          // Set to Pending for manual payout collection by agent later
+          await supabase.from("tenant_deposits").update({ status: "Pending" }).eq("id", dep.id);
+          refundedDepositsSum += dep.amount_paid;
+        } else if (dep.amount_paid <= remainingToApply) {
+          // Fully applied to deductions
+          await supabase.from("tenant_deposits").update({ status: "Applied" }).eq("id", dep.id);
+          remainingToApply -= dep.amount_paid;
+        } else {
+          // Partially applied — split into two records
+          const appliedPart = remainingToApply;
+          const refundedPart = dep.amount_paid - remainingToApply;
+          await supabase.from("tenant_deposits").update({ amount_paid: refundedPart, status: "Pending" }).eq("id", dep.id);
+          refundedDepositsSum += refundedPart;
+          await supabase.from("tenant_deposits").insert({
+            tenant_id: dep.tenant_id,
+            invoice_id: dep.invoice_id,
+            deposit_type: `${dep.deposit_type} (Applied)`,
+            amount_billed: appliedPart,
+            amount_paid: appliedPart,
+            status: "Applied",
+          });
+          remainingToApply = 0;
         }
+      }
+
+      // 7. Mark notices
+      if (vacateNotice) {
+        await supabase.from("vacate_notices").update({ status: "Completed" }).eq("id", vacateNotice.id);
+      }
+      if (activeEviction) {
+        await supabase.from("evictions").update({ status: "Enforced" }).eq("id", activeEviction.id);
       }
 
       toast({ title: "Tenant checked out successfully!" });
@@ -622,49 +752,164 @@ export default function UnitLeaseCard({ unit, leases, onLeaseUpdated, propertyNa
 
       {/* Checkout Dialog */}
       <Dialog open={showCheckout} onOpenChange={setShowCheckout}>
-        <DialogContent className="max-w-sm mx-auto">
+        <DialogContent className="max-w-sm mx-auto max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Confirm Tenant Check-out</DialogTitle>
+            <DialogTitle>{activeEviction ? "Enforce Eviction & Check-out" : "Confirm Tenant Check-out"}</DialogTitle>
           </DialogHeader>
           <form onSubmit={handleCheckoutSubmit} className="space-y-4 pt-2">
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 flex gap-2.5">
-              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+            <div className={`border rounded-xl p-3.5 flex gap-2.5 ${activeEviction ? "bg-red-50 border-red-200" : "bg-amber-50 border-amber-200"}`}>
+              <AlertCircle className={`w-5 h-5 shrink-0 mt-0.5 ${activeEviction ? "text-red-600" : "text-amber-600"}`} />
               <div>
-                <p className="text-xs font-semibold text-amber-900">Check-out Warning</p>
-                <p className="text-[11px] text-amber-700">This will terminate the active lease immediately, mark the tenant as Inactive, and set this unit status back to Vacant.</p>
+                <p className={`text-xs font-semibold ${activeEviction ? "text-red-900" : "text-amber-900"}`}>
+                  {activeEviction ? "Eviction Enforcement" : "Check-out Warning"}
+                </p>
+                <p className={`text-[11px] ${activeEviction ? "text-red-700" : "text-amber-700"}`}>
+                  {activeEviction
+                    ? `Enforcing eviction for: ${activeEviction.breach_type}. This terminates the lease, marks the tenant Inactive, and settles the deposit.`
+                    : "This terminates the active lease, marks the tenant as Inactive, and returns the unit to Vacant."}
+                </p>
               </div>
             </div>
 
-            {heldDeposits.length > 0 && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-2">
-                <p className="text-xs font-semibold text-emerald-950">Refundable Deposits Ledger</p>
-                <div className="space-y-1 text-[11px] text-emerald-700">
-                  {heldDeposits.map((d) => (
-                    <div key={d.id} className="flex justify-between">
-                      <span>{d.deposit_type}</span>
-                      <span className="font-bold">{formatKES(d.amount_paid)} (Paid of {formatKES(d.amount_billed)})</span>
+            {heldDeposits.length > 0 && (() => {
+              const totalHeld = heldDeposits.reduce((sum, d) => sum + d.amount_paid, 0);
+              const totalArrearsAllocated = Object.values(arrearsAllocations).reduce((sum, v) => sum + (parseInt(v) || 0), 0);
+              const totalDamages = parseInt(damagesAmount) || 0;
+              const finalRefund = Math.max(0, totalHeld - totalArrearsAllocated - totalDamages);
+              const exceedsDeposit = totalArrearsAllocated + totalDamages > totalHeld;
+
+              return (
+                <div className="space-y-3">
+                  {/* Held Deposits Summary */}
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 space-y-2">
+                    <p className="text-xs font-semibold text-emerald-950">Held Deposits</p>
+                    <div className="space-y-1 text-[11px] text-emerald-700">
+                      {heldDeposits.map((d) => (
+                        <div key={d.id} className="flex justify-between">
+                          <span>{d.deposit_type}</span>
+                          <span className="font-bold">{formatKES(d.amount_paid)}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between border-t border-emerald-200 pt-1 font-bold text-emerald-950 mt-1">
+                        <span>Total Held</span>
+                        <span>{formatKES(totalHeld)}</span>
+                      </div>
                     </div>
-                  ))}
-                  <div className="flex justify-between border-t border-emerald-200 pt-1 font-bold text-emerald-950 mt-1">
-                    <span>Total Held</span>
-                    <span>{formatKES(heldDeposits.reduce((sum, d) => sum + d.amount_paid, 0))}</span>
                   </div>
+
+                  {/* Apply to Rent Arrears */}
+                  {unpaidInvoices.length > 0 && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                        <Coins className="w-3.5 h-3.5 text-primary" /> Apply to Rent Arrears
+                      </Label>
+                      <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+                        {unpaidInvoices.map((inv) => {
+                          const maxAlloc = inv.total - (inv.amount_paid || 0);
+                          return (
+                            <div key={inv.id} className="flex flex-col space-y-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5">
+                              <div className="flex justify-between text-[11px] font-semibold text-foreground">
+                                <span>{inv.month_for}</span>
+                                <span className="text-red-600">Owed: {formatKES(maxAlloc)}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-muted-foreground shrink-0">Apply KES</span>
+                                <Input
+                                  type="number"
+                                  placeholder="0"
+                                  value={arrearsAllocations[inv.id] || ""}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    const num = Math.min(Math.max(0, parseInt(val) || 0), maxAlloc);
+                                    setArrearsAllocations({ ...arrearsAllocations, [inv.id]: val === "" ? "" : num.toString() });
+                                  }}
+                                  className="h-7 text-xs flex-1 px-2"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Deduct for Damages */}
+                  <div className="space-y-2">
+                    <Label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
+                      <Wrench className="w-3.5 h-3.5 text-orange-500" /> Deduct for Damages / Repairs
+                    </Label>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-muted-foreground shrink-0">KES</span>
+                      <Input
+                        type="number"
+                        placeholder="0"
+                        value={damagesAmount}
+                        onChange={(e) => setDamagesAmount(e.target.value === "" ? "" : Math.max(0, parseInt(e.target.value) || 0).toString())}
+                        className="h-8 text-xs flex-1"
+                      />
+                    </div>
+                    <Input
+                      type="text"
+                      placeholder="Description of damages (e.g. broken window, repainting)"
+                      value={damagesDescription}
+                      onChange={(e) => setDamagesDescription(e.target.value)}
+                      className="h-8 text-[11px]"
+                    />
+                  </div>
+
+                  {/* Refund summary */}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-1.5">
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Total Held:</span>
+                      <span className="font-semibold text-foreground">{formatKES(totalHeld)}</span>
+                    </div>
+                    {totalArrearsAllocated > 0 && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Applied to Arrears:</span>
+                        <span className="font-semibold text-red-600">-{formatKES(totalArrearsAllocated)}</span>
+                      </div>
+                    )}
+                    {totalDamages > 0 && (
+                      <div className="flex justify-between text-muted-foreground">
+                        <span>Applied to Damages:</span>
+                        <span className="font-semibold text-red-600">-{formatKES(totalDamages)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between border-t border-slate-200 pt-1.5 font-bold text-emerald-700">
+                      <span>Net Refund to Tenant:</span>
+                      <span>{formatKES(finalRefund)}</span>
+                    </div>
+                  </div>
+
+                  {exceedsDeposit && (
+                    <div className="bg-red-50 border border-red-200 text-red-800 text-[11px] rounded-lg p-2.5 flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4 text-red-600 shrink-0" />
+                      <span>Deductions exceed total held deposit of {formatKES(totalHeld)}!</span>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             <div>
-              <Label>Inspection Report (After Check-out)</Label>
-              <Input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setAfterFile(e.target.files?.[0])} />
+              <Label className="text-xs">Inspection Report (After Check-out)</Label>
+              <Input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={(e) => setAfterFile(e.target.files?.[0])} className="mt-1" />
             </div>
 
-            <Button type="submit" className="w-full h-11 bg-destructive hover:bg-destructive/90 text-destructive-foreground" disabled={savingCheckout}>
+            <Button
+              type="submit"
+              className="w-full h-11 bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              disabled={savingCheckout || (() => {
+                const totalHeld = heldDeposits.reduce((sum, d) => sum + d.amount_paid, 0);
+                const totalArr = Object.values(arrearsAllocations).reduce((sum, v) => sum + (parseInt(v) || 0), 0);
+                const totalDmg = parseInt(damagesAmount) || 0;
+                return totalArr + totalDmg > totalHeld;
+              })()}
+            >
               {savingCheckout ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Terminating Lease
-                </>
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Processing Check-out...</>
               ) : (
-                "Confirm & Terminate Lease"
+                activeEviction ? "Enforce Eviction & Terminate Lease" : "Confirm & Terminate Lease"
               )}
             </Button>
           </form>

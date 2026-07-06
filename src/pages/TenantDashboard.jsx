@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
 import { Link } from "react-router-dom";
-import { DoorOpen, CreditCard, CheckCircle2, Clock, LogOut, TrendingUp, AlertCircle } from "lucide-react";
+import { DoorOpen, CreditCard, CheckCircle2, Clock, LogOut, TrendingUp, AlertCircle, Wallet, ShieldCheck } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
 import StatCard from "@/components/shared/StatCard";
@@ -15,6 +15,7 @@ export default function TenantDashboard() {
   const [tenant, setTenant] = useState(null);
   const [invoices, setInvoices] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [deposits, setDeposits] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => { loadData(); }, [user]);
@@ -51,6 +52,13 @@ export default function TenantDashboard() {
         setPayments(payRes.data || []);
       } else if (tenantData) {
         setTenant(tenantData); // Still save it to display move-out summary in dormant state screen
+        // Fetch deposit settlement for the dormant/inactive tenant
+        const { data: depData } = await supabase
+          .from("tenant_deposits")
+          .select("*")
+          .eq("tenant_id", tenantData.id)
+          .order("created_date", { ascending: true });
+        setDeposits(depData || []);
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -59,15 +67,20 @@ export default function TenantDashboard() {
   if (loading) return (<><PageHeader title="Loading..." /><LoadingSpinner /></>);
 
   if (!tenant || tenant.status === "Inactive") {
+    const totalPaid = deposits.reduce((s, d) => s + d.amount_paid, 0);
+    const totalRefunded = deposits.filter((d) => d.status === "Refunded").reduce((s, d) => s + d.amount_paid, 0);
+    const totalApplied = deposits.filter((d) => d.status === "Applied").reduce((s, d) => s + d.amount_paid, 0);
+    const hasDeposits = deposits.length > 0;
+    const hasSettlement = deposits.some((d) => d.status === "Refunded" || d.status === "Applied");
+
     return (
       <div>
-        <PageHeader title="ApartaBase" action={
-          <button onClick={signOut} className="p-2 rounded-lg hover:bg-white/10"><LogOut className="w-5 h-5" /></button>
-        } />
-        <div className="max-w-lg mx-auto px-4 py-16 text-center space-y-6">
-          <div className="bg-muted/40 border border-border p-6 rounded-2xl max-w-sm mx-auto shadow-sm space-y-4">
-            <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto" />
-            <div className="space-y-1">
+        <PageHeader title="ApartaBase" />
+        <div className="max-w-lg mx-auto px-4 py-10 space-y-4">
+          {/* Dormant card */}
+          <div className="bg-muted/40 border border-border p-6 rounded-2xl shadow-sm space-y-4">
+            <div className="text-center space-y-2">
+              <CheckCircle2 className="w-12 h-12 text-emerald-600 mx-auto" />
               <h3 className="text-base font-bold text-foreground">Tenancy Dormant</h3>
               {tenant && tenant.status === "Inactive" ? (
                 <p className="text-xs text-muted-foreground leading-relaxed">
@@ -79,7 +92,16 @@ export default function TenantDashboard() {
                 </p>
               )}
             </div>
-            
+
+            {tenant && tenant.status === "Inactive" && (
+              <div className="bg-red-50/70 border border-red-200/50 rounded-xl p-3 flex gap-2.5 items-start text-left">
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                <p className="text-[10px] text-red-800 leading-normal">
+                  <strong>Notice:</strong> Your dormant tenancy profile and all associated logs (leases, payments, invoices) will be permanently cleared from the database 3 months after your checkout date. Please back up any records you require for your archives.
+                </p>
+              </div>
+            )}
+
             {tenant && tenant.status === "Inactive" && (
               <div className="text-left text-xs bg-card p-3 rounded-lg border border-border/60 space-y-1.5 font-sans">
                 <div className="flex justify-between">
@@ -94,7 +116,78 @@ export default function TenantDashboard() {
             )}
           </div>
 
-          <div className="space-y-2">
+          {/* Deposit Settlement Card */}
+          {tenant && tenant.status === "Inactive" && hasDeposits && (
+            <div className="bg-card border border-border rounded-2xl shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2.5 px-4 py-3.5 border-b border-border bg-muted/30">
+                <Wallet className="w-4.5 h-4.5 text-primary" />
+                <h3 className="text-sm font-bold text-foreground">Security Deposit Settlement</h3>
+              </div>
+
+              <div className="p-4 space-y-2">
+                {deposits.map((d) => (
+                  <div key={d.id} className="flex justify-between items-start text-xs p-2.5 bg-muted/30 rounded-lg border border-border/40">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground">{d.deposit_type}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Billed: {formatKES(d.amount_billed)}</p>
+                      {d.status === "Applied" && (
+                        <p className="text-[10px] text-orange-600 mt-0.5 italic">Applied to settle arrears / repair costs</p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0 ml-3">
+                      <p className={`font-bold text-sm ${
+                        d.status === "Applied" ? "text-orange-500" : d.status === "Refunded" ? "text-indigo-600" : "text-emerald-600"
+                      }`}>
+                        {formatKES(d.amount_paid)}
+                      </p>
+                      <span className={`inline-block text-[9px] font-semibold px-2 py-0.5 rounded-full mt-1 ${
+                        d.status === "Held"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : d.status === "Refunded"
+                          ? "bg-indigo-100 text-indigo-800"
+                          : d.status === "Applied"
+                          ? "bg-orange-100 text-orange-800"
+                          : "bg-gray-100 text-gray-600"
+                      }`}>
+                        {d.status === "Applied" ? "Deducted" : d.status === "Refunded" ? "Refunded" : d.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Summary breakdown */}
+              {hasSettlement && (
+                <div className="mx-4 mb-4 bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-xs space-y-2">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Final Statement</p>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Total Deposit Paid</span>
+                    <span className="font-semibold text-foreground">{formatKES(totalPaid)}</span>
+                  </div>
+                  {totalApplied > 0 && (
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Deducted (arrears / damages)</span>
+                      <span className="font-semibold text-orange-600">−{formatKES(totalApplied)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-t border-slate-200 pt-2 font-bold">
+                    <span className="text-foreground">Net Amount Refunded</span>
+                    <span className="text-indigo-700 text-sm">{formatKES(totalRefunded)}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* If deposit is still Held (checkout happened without settling deposits) */}
+              {!hasSettlement && deposits.every((d) => d.status === "Held") && (
+                <div className="mx-4 mb-4 flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs">
+                  <ShieldCheck className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-amber-800">Your deposit of <span className="font-bold">{formatKES(totalPaid)}</span> is still being processed. Contact your property agent for your refund status.</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="space-y-2 text-center">
             <p className="text-[11px] text-muted-foreground">
               Need past invoices or receipts? Contact your agent or landlord.
             </p>
@@ -124,7 +217,6 @@ export default function TenantDashboard() {
       <PageHeader
         title={`Habari, ${firstName} 👋`}
         subtitle={`${tenant.unit_number} · ${tenant.property_name}`}
-        action={<button onClick={signOut} className="p-2 rounded-lg hover:bg-white/10 transition-colors"><LogOut className="w-5 h-5" /></button>}
       />
       <div className="max-w-lg mx-auto px-4 py-5 space-y-5">
         {!profile?.phone && (

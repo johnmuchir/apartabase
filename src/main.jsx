@@ -15,6 +15,12 @@ const queryClient = new QueryClient({
     },
   },
 })
+// Remove splash welcoming screen on mount
+const splash = document.getElementById('app-splash');
+if (splash) {
+  splash.style.opacity = '0';
+  setTimeout(() => splash.remove(), 500);
+}
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -283,36 +283,71 @@ export default function TenantUnit() {
         )}
 
         {/* Deposits Ledger */}
-        {deposits.length > 0 && (
-          <div className="bg-card rounded-xl border border-border p-4 shadow-sm space-y-3">
-            <div className="flex items-center gap-2 border-b border-border pb-2">
-              <Wallet className="w-4.5 h-4.5 text-primary" />
-              <h3 className="text-sm font-bold">Refundable Deposits Ledger</h3>
-            </div>
-            <div className="space-y-2">
-              {deposits.map((d) => (
-                <div key={d.id} className="flex justify-between items-center text-xs p-2.5 bg-muted/30 rounded-lg border border-border/30">
-                  <div>
-                    <p className="font-semibold text-foreground">{d.deposit_type}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Billed: {formatKES(d.amount_billed)}</p>
+        {deposits.length > 0 && (() => {
+          const totalPaid = deposits.reduce((s, d) => s + d.amount_paid, 0);
+          const totalRefunded = deposits.filter((d) => d.status === "Refunded").reduce((s, d) => s + d.amount_paid, 0);
+          const totalApplied = deposits.filter((d) => d.status === "Applied").reduce((s, d) => s + d.amount_paid, 0);
+          const hasSettled = deposits.some((d) => d.status === "Refunded" || d.status === "Applied");
+
+          return (
+            <div className="bg-card rounded-xl border border-border p-4 shadow-sm space-y-3">
+              <div className="flex items-center gap-2 border-b border-border pb-2">
+                <Wallet className="w-4.5 h-4.5 text-primary" />
+                <h3 className="text-sm font-bold">Security Deposit Ledger</h3>
+              </div>
+              <div className="space-y-2">
+                {deposits.map((d) => (
+                  <div key={d.id} className="flex justify-between items-start text-xs p-2.5 bg-muted/30 rounded-lg border border-border/30">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-foreground">{d.deposit_type}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">Billed: {formatKES(d.amount_billed)}</p>
+                      {d.status === "Applied" && (
+                        <p className="text-[10px] text-orange-600 mt-0.5 italic">Used to settle arrears / repair costs</p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0 ml-3">
+                      <p className={`font-bold ${d.status === "Applied" ? "text-orange-500" : "text-emerald-600"}`}>
+                        {formatKES(d.amount_paid)}
+                      </p>
+                      <span className={`inline-block text-[9px] font-semibold px-2 py-0.5 rounded-full mt-1 ${
+                        d.status === "Held"
+                          ? "bg-emerald-100 text-emerald-800"
+                          : d.status === "Refunded"
+                          ? "bg-indigo-100 text-indigo-800"
+                          : d.status === "Applied"
+                          ? "bg-orange-100 text-orange-800"
+                          : "bg-gray-100 text-gray-600"
+                      }`}>
+                        {d.status === "Held" ? "Held" : d.status === "Refunded" ? "Refunded" : d.status === "Applied" ? "Applied (Deducted)" : d.status}
+                      </span>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <p className="font-bold text-emerald-600">{formatKES(d.amount_paid)} paid</p>
-                    <span className={`inline-block text-[9px] font-semibold px-2 py-0.5 rounded-full mt-1 ${
-                      d.status === "Held" 
-                        ? "bg-emerald-100 text-emerald-800" 
-                        : d.status === "Refunded" 
-                        ? "bg-indigo-100 text-indigo-800" 
-                        : "bg-amber-100 text-amber-800"
-                    }`}>
-                      {d.status}
-                    </span>
+                ))}
+              </div>
+
+              {/* Settlement Summary */}
+              {hasSettled && (
+                <div className="bg-muted/40 border border-border/50 rounded-lg p-3 text-xs space-y-1.5">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">Deposit Settlement</p>
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Total Paid In:</span>
+                    <span className="font-semibold text-foreground">{formatKES(totalPaid)}</span>
+                  </div>
+                  {totalApplied > 0 && (
+                    <div className="flex justify-between text-muted-foreground">
+                      <span>Deducted (arrears/damages):</span>
+                      <span className="font-semibold text-orange-600">-{formatKES(totalApplied)}</span>
+                    </div>
+                  )}
+                  <div className="flex justify-between border-t border-border/50 pt-1.5 font-bold text-indigo-700">
+                    <span>Net Refunded:</span>
+                    <span>{formatKES(totalRefunded)}</span>
                   </div>
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Notice to Vacate Card */}
         {tenant && (
