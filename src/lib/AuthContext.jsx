@@ -29,9 +29,23 @@ export function AuthProvider({ children }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const p = await fetchProfile(session.user.id);
-        setUser(session.user);
-        setProfile(p);
+        if (typeof window !== 'undefined' && (localStorage.getItem('demo_role') || localStorage.getItem('demo_user'))) {
+          const role = localStorage.getItem('demo_role') || 'tenant';
+          const savedUser = localStorage.getItem('demo_user');
+          const mockProfile = savedUser ? JSON.parse(savedUser) : {
+            id: session.user.id,
+            email: session.user.email,
+            full_name: session.user.user_metadata?.full_name || `Demo ${role.charAt(0).toUpperCase() + role.slice(1)}`,
+            role: role,
+            phone: '+254 700 000000'
+          };
+          setUser(session.user);
+          setProfile(mockProfile);
+        } else {
+          const p = await fetchProfile(session.user.id);
+          setUser(session.user);
+          setProfile(p);
+        }
       } else {
         setUser(null);
         setProfile(null);
@@ -47,9 +61,23 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         if (session?.user) {
-          const p = await fetchProfile(session.user.id);
-          setUser(session.user);
-          setProfile(p);
+          if (typeof window !== 'undefined' && (localStorage.getItem('demo_role') || localStorage.getItem('demo_user'))) {
+            const role = localStorage.getItem('demo_role') || 'tenant';
+            const savedUser = localStorage.getItem('demo_user');
+            const mockProfile = savedUser ? JSON.parse(savedUser) : {
+              id: session.user.id,
+              email: session.user.email,
+              full_name: session.user.user_metadata?.full_name || `Demo ${role.charAt(0).toUpperCase() + role.slice(1)}`,
+              role: role,
+              phone: '+254 700 000000'
+            };
+            setUser(session.user);
+            setProfile(mockProfile);
+          } else {
+            const p = await fetchProfile(session.user.id);
+            setUser(session.user);
+            setProfile(p);
+          }
         }
       } else if (event === 'SIGNED_OUT') {
         setUser(null);
@@ -63,6 +91,7 @@ export function AuthProvider({ children }) {
 
   const signOut = async () => {
     localStorage.removeItem('demo_role');
+    localStorage.removeItem('demo_user');
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);

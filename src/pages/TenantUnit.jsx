@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
+import { resetMockDb } from "@/lib/mockDb";
 import { DoorOpen, Phone, Calendar, Home, User as UserIcon, FileText, FileCheck, Wallet, AlertTriangle, Loader2 } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
@@ -10,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function TenantUnit() {
-  const { user } = useAuth();
+  const { user, demoRole } = useAuth();
   const [tenant, setTenant] = useState(null);
   const [lease, setLease] = useState(null);
   const [deposits, setDeposits] = useState([]);
@@ -23,10 +24,11 @@ export default function TenantUnit() {
 
   useEffect(() => {
     const loadTenantLease = async () => {
+      // Keep spinner running until auth resolves
       if (!user) return;
       try {
         // 1. Fetch active tenant linked to user
-        const { data: tenantData, error: tenantErr } = await supabase
+        let { data: tenantData, error: tenantErr } = await supabase
           .from("tenants")
           .select("*")
           .eq("user_id", user.id)
@@ -34,6 +36,15 @@ export default function TenantUnit() {
           .maybeSingle();
 
         if (tenantErr) throw tenantErr;
+
+        // Demo self-heal: stale cache? wipe and retry once
+        if (!tenantData && demoRole === "tenant") {
+          resetMockDb();
+          const { data: fresh } = await supabase
+            .from("tenants").select("*")
+            .eq("user_id", user.id).eq("status", "Active").maybeSingle();
+          tenantData = fresh;
+        }
         
         if (tenantData) {
           setTenant(tenantData);
@@ -85,7 +96,7 @@ export default function TenantUnit() {
       }
     };
     loadTenantLease();
-  }, [user]);
+  }, [user, demoRole]);
 
   const handleNoticeSubmit = async (e) => {
     e.preventDefault();

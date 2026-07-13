@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useAuth } from "@/lib/AuthContext";
 import { supabase } from "@/lib/supabase";
-import { Link } from "react-router-dom";
+import { resetMockDb } from "@/lib/mockDb";
+import { Link, useNavigate } from "react-router-dom";
 import { DoorOpen, CreditCard, CheckCircle2, Clock, LogOut, TrendingUp, AlertCircle, Wallet, ShieldCheck } from "lucide-react";
 import PageHeader from "@/components/layout/PageHeader";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
@@ -11,7 +12,8 @@ import { Button } from "@/components/ui/button";
 const formatKES = (n) => `KES ${(n || 0).toLocaleString()}`;
 
 export default function TenantDashboard() {
-  const { signOut, profile, user } = useAuth();
+  const { signOut, profile, user, demoRole } = useAuth();
+  const navigate = useNavigate();
   const [tenant, setTenant] = useState(null);
   const [invoices, setInvoices] = useState([]);
   const [payments, setPayments] = useState([]);
@@ -21,8 +23,9 @@ export default function TenantDashboard() {
   useEffect(() => { loadData(); }, [user]);
 
   const loadData = async () => {
+    // Keep spinner running until auth resolves — don't flip to dormant prematurely
+    if (!user) return;
     try {
-      if (!user) return;
       let { data: tenantData } = await supabase
         .from("tenants").select("*")
         .eq("user_id", user.id).eq("status", "Active").maybeSingle();
@@ -39,6 +42,25 @@ export default function TenantDashboard() {
           const { data: anyByEmail } = await supabase
             .from("tenants").select("*").eq("email", user.email).order("created_date", { ascending: false }).limit(1);
           tenantData = anyByEmail?.[0] ?? null;
+        }
+      }
+
+      // Demo self-heal: stale cache? wipe and retry once
+      if (!tenantData && demoRole === "tenant") {
+        resetMockDb();
+        const { data: fresh } = await supabase
+          .from("tenants").select("*")
+          .eq("user_id", user.id).eq("status", "Active").maybeSingle();
+        tenantData = fresh;
+
+        // Nuclear exit: if STILL no tenant after self-heal, the demo session is
+        // completely broken — clear all state and send visitor back to /welcome
+        if (!fresh) {
+          localStorage.removeItem("demo_role");
+          localStorage.removeItem("demo_user");
+          localStorage.removeItem("apartabase_mock_db");
+          navigate("/welcome", { replace: true });
+          return;
         }
       }
 
@@ -67,6 +89,36 @@ export default function TenantDashboard() {
   if (loading) return (<><PageHeader title="Loading..." /><LoadingSpinner /></>);
 
   if (!tenant || tenant.status === "Inactive") {
+    // --- DEMO MODE: broken/stale session recovery screen ---
+    if (demoRole) {
+      return (
+        <div>
+          <PageHeader title="ApartaBase Demo" />
+          <div className="max-w-lg mx-auto px-4 py-10">
+            <div className="bg-muted/40 border border-border p-8 rounded-2xl shadow-sm text-center space-y-4">
+              <DoorOpen className="w-12 h-12 text-indigo-400 mx-auto" />
+              <h3 className="text-base font-bold text-foreground">Demo Session Reset</h3>
+              <p className="text-xs text-muted-foreground leading-relaxed max-w-xs mx-auto">
+                The demo session data needs to be refreshed. Return to the welcome screen to relaunch a clean demo.
+              </p>
+              <Button
+                onClick={() => {
+                  localStorage.removeItem("demo_role");
+                  localStorage.removeItem("demo_user");
+                  localStorage.removeItem("apartabase_mock_db");
+                  window.location.href = "/welcome";
+                }}
+                className="w-full max-w-xs h-10 font-semibold text-xs rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white"
+              >
+                ← Return to Welcome
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // --- REAL USER: dormant/unlinked tenant screen ---
     const totalPaid = deposits.reduce((s, d) => s + d.amount_paid, 0);
     const totalRefunded = deposits.filter((d) => d.status === "Refunded").reduce((s, d) => s + d.amount_paid, 0);
     const totalApplied = deposits.filter((d) => d.status === "Applied").reduce((s, d) => s + d.amount_paid, 0);

@@ -7,6 +7,7 @@ import AppLayout from "@/components/layout/AppLayout";
 import ProtectedRoute from "@/components/ProtectedRoute";
 
 // Public Pages & Auth
+import Welcome from "@/pages/Welcome";
 import Login from "@/pages/Login";
 import AcceptInvite from "@/pages/AcceptInvite";
 import ResetPassword from "@/pages/ResetPassword";
@@ -24,6 +25,7 @@ import Properties from "@/pages/Properties";
 import PropertyDetail from "@/pages/PropertyDetail";
 import Units from "@/pages/Units";
 import Tenants from "@/pages/Tenants";
+import TenantDetail from "@/pages/TenantDetail";
 import Payments from "@/pages/Payments";
 import AgentMaintenance from "@/pages/AgentMaintenance";
 import Notices from "@/pages/Notices";
@@ -57,13 +59,14 @@ export default function App() {
   return (
     <Routes>
       {/* Public Pages */}
+      <Route path="/welcome" element={<Welcome />} />
       <Route path="/login" element={<Login />} />
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/public/unit/:id" element={<PublicUnit />} />
 
       {/* Protected App Routes */}
-      <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/login" replace />} />}>
+      <Route element={<ProtectedRoute unauthenticatedElement={<Navigate to="/welcome" replace />} />}>
         <Route element={<AppLayout />}>
           {/* Dashboard Hub */}
           <Route path="/" element={<HomeRedirect />} />
@@ -73,6 +76,7 @@ export default function App() {
           <Route path="/properties/:id" element={<PropertyDetail />} />
           <Route path="/units" element={<Units />} />
           <Route path="/tenants" element={<Tenants />} />
+          <Route path="/tenants/:id" element={<TenantDetail />} />
           <Route path="/payments" element={<Payments />} />
           <Route path="/maintenance" element={<AgentMaintenance />} />
           <Route path="/notices" element={<Notices />} />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { entities } from "@/api/supabaseClient";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/lib/AuthContext";
@@ -22,7 +23,6 @@ export default function Tenants() {
   const [units, setUnits] = useState([]);
   const [deposits, setDeposits] = useState([]);
   const [payouts, setPayouts] = useState([]);
-  const [expandedTenantIds, setExpandedTenantIds] = useState(new Set());
   const [confirmDeleteTenant, setConfirmDeleteTenant] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -115,15 +115,6 @@ export default function Tenants() {
     }
   };
 
-  const toggleExpandTenant = (id) => {
-    const next = new Set(expandedTenantIds);
-    if (next.has(id)) {
-      next.delete(id);
-    } else {
-      next.add(id);
-    }
-    setExpandedTenantIds(next);
-  };
 
   const vacantUnits = units.filter((u) => u.status === "Vacant" && u.property_id === form.property_id);
 
@@ -216,16 +207,12 @@ export default function Tenants() {
                         )}
                       </div>
                     )}
-                    <button
-                      onClick={() => toggleExpandTenant(t.id)}
-                      className="text-[10px] text-muted-foreground hover:text-foreground font-semibold flex items-center gap-1 mt-2.5 transition-colors"
+                    <Link
+                      to={`/tenants/${t.id}`}
+                      className="text-[10px] text-primary hover:underline font-semibold flex items-center gap-1 mt-2.5 transition-colors"
                     >
-                      {expandedTenantIds.has(t.id) ? (
-                        <>Hide Details <ChevronUp className="w-3.5 h-3.5" /></>
-                      ) : (
-                        <>View Details <ChevronDown className="w-3.5 h-3.5" /></>
-                      )}
-                    </button>
+                      View Details &rarr;
+                    </Link>
                   </div>
                   <div className="text-right shrink-0">
                     <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
@@ -249,95 +236,6 @@ export default function Tenants() {
                     )}
                   </div>
                 </div>
-
-                {/* Collapsible Details */}
-                {expandedTenantIds.has(t.id) && (
-                  <div className="mt-3 pt-3 border-t border-border/60 space-y-3.5">
-                    {/* Extra Tenant Info */}
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] bg-muted/30 p-3 rounded-xl border border-border/40">
-                      <div>
-                        <span className="text-muted-foreground block text-[9px] uppercase tracking-wider font-bold">National ID</span>
-                        <span className="font-semibold text-foreground">{t.id_number || "—"}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground block text-[9px] uppercase tracking-wider font-bold">Email</span>
-                        <span className="font-semibold text-foreground truncate block">{t.email || "—"}</span>
-                      </div>
-                      <div className="col-span-2">
-                        <span className="text-muted-foreground block text-[9px] uppercase tracking-wider font-bold">Lease Start Date</span>
-                        <span className="font-semibold text-foreground">{t.lease_start || "—"}</span>
-                      </div>
-                    </div>
-
-                    {/* Deposits List */}
-                    {deposits.filter((d) => d.tenant_id === t.id).length > 0 && (
-                      <div className="space-y-1.5">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
-                          <Wallet className="w-3 h-3 text-primary" /> Refundable Deposits
-                        </p>
-                        <div className="space-y-2">
-                          {deposits
-                            .filter((d) => d.tenant_id === t.id)
-                            .map((dep) => {
-                              const linkedPayout = payouts.find((p) => p.id === dep.payout_id || p.linked_deposit_id === dep.id);
-                              const canVerify = dep.status === "Pending" && linkedPayout?.status === "Confirmed" && isAgent;
-
-                              return (
-                                <div key={dep.id} className="bg-muted/40 p-3 rounded-xl border border-border/30 flex flex-col gap-2 text-[11px]">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-muted-foreground truncate font-medium">{dep.deposit_type}</span>
-                                    <div className="shrink-0 flex items-center gap-2">
-                                      <span className="font-semibold text-foreground">KES {dep.amount_paid.toLocaleString()}</span>
-                                      <span className={`inline-block text-[9px] font-semibold px-2 py-0.5 rounded-full ${
-                                        dep.status === "Held"
-                                          ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                                          : dep.status === "Refunded"
-                                          ? "bg-indigo-50 text-indigo-700 border border-indigo-200"
-                                          : "bg-amber-50 text-amber-700 border border-amber-200"
-                                      }`}>
-                                        {dep.status}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* If Pending, show payout reference status and verification button */}
-                                  {dep.status === "Pending" && (
-                                    <div className="flex items-center justify-between bg-muted/60 p-2 rounded-lg border border-border/20 mt-1">
-                                      <div className="text-[10px] text-muted-foreground">
-                                        {linkedPayout ? (
-                                          linkedPayout.status === "Confirmed" ? (
-                                            <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                                              <CheckCircle2 className="w-3 h-3" /> Landlord Paid
-                                            </span>
-                                          ) : (
-                                            <span className="text-amber-700 font-semibold flex items-center gap-1">
-                                              <Clock className="w-3 h-3" /> Awaiting Landlord
-                                            </span>
-                                          )
-                                        ) : (
-                                          <span className="italic">No payout request created</span>
-                                        )}
-                                      </div>
-
-                                      {canVerify && (
-                                        <Button
-                                          size="sm"
-                                          onClick={() => handleVerifyDepositRefund(dep.id)}
-                                          className="h-6 text-[9px] px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded"
-                                        >
-                                          Confirm Refunded
-                                        </Button>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             ))}
           </div>

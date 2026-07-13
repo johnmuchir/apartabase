@@ -11,14 +11,17 @@ const DefaultFallback = () => (
 export default function ProtectedRoute({ fallback = <DefaultFallback />, unauthenticatedElement }) {
   const { isAuthenticated, isLoadingAuth, profile, demoRole } = useAuth();
 
-  // Demo mode: bypass real auth if a demo role is selected
+  // While auth is initializing, always show the loading fallback
+  if (isLoadingAuth) {
+    return fallback;
+  }
+
+  // Demo mode: bypass real auth once the mock session is ready
   if (demoRole) {
     return <Outlet />;
   }
 
-  if (isLoadingAuth) {
-    return fallback;
-  }
+
 
   if (!isAuthenticated) {
     return unauthenticatedElement;
