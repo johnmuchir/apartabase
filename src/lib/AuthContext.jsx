@@ -3,6 +3,30 @@ import { supabase } from '@/lib/supabase';
 
 const AuthContext = createContext(null);
 
+const safeGetItem = (key) => {
+  try {
+    return typeof window !== 'undefined' ? localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+};
+
+const safeSetItem = (key, value) => {
+  try {
+    if (typeof window !== 'undefined') localStorage.setItem(key, value);
+  } catch (err) {
+    console.warn("localStorage.setItem failed:", err);
+  }
+};
+
+const safeRemoveItem = (key) => {
+  try {
+    if (typeof window !== 'undefined') localStorage.removeItem(key);
+  } catch (err) {
+    console.warn("localStorage.removeItem failed:", err);
+  }
+};
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -29,9 +53,9 @@ export function AuthProvider({ children }) {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        if (typeof window !== 'undefined' && (localStorage.getItem('demo_role') || localStorage.getItem('demo_user'))) {
-          const role = localStorage.getItem('demo_role') || 'tenant';
-          const savedUser = localStorage.getItem('demo_user');
+        if (typeof window !== 'undefined' && (safeGetItem('demo_role') || safeGetItem('demo_user'))) {
+          const role = safeGetItem('demo_role') || 'tenant';
+          const savedUser = safeGetItem('demo_user');
           const mockProfile = savedUser ? JSON.parse(savedUser) : {
             id: session.user.id,
             email: session.user.email,
@@ -61,9 +85,9 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
         if (session?.user) {
-          if (typeof window !== 'undefined' && (localStorage.getItem('demo_role') || localStorage.getItem('demo_user'))) {
-            const role = localStorage.getItem('demo_role') || 'tenant';
-            const savedUser = localStorage.getItem('demo_user');
+          if (typeof window !== 'undefined' && (safeGetItem('demo_role') || safeGetItem('demo_user'))) {
+            const role = safeGetItem('demo_role') || 'tenant';
+            const savedUser = safeGetItem('demo_user');
             const mockProfile = savedUser ? JSON.parse(savedUser) : {
               id: session.user.id,
               email: session.user.email,
@@ -90,8 +114,8 @@ export function AuthProvider({ children }) {
   }, [initAuth, fetchProfile]);
 
   const signOut = async () => {
-    localStorage.removeItem('demo_role');
-    localStorage.removeItem('demo_user');
+    safeRemoveItem('demo_role');
+    safeRemoveItem('demo_user');
     await supabase.auth.signOut();
     setUser(null);
     setProfile(null);
@@ -105,7 +129,7 @@ export function AuthProvider({ children }) {
   };
 
   // Demo mode bypass — read demo_role from localStorage
-  const demoRole = typeof window !== 'undefined' ? localStorage.getItem('demo_role') : null;
+  const demoRole = typeof window !== 'undefined' ? safeGetItem('demo_role') : null;
 
   const isAuthenticated = demoRole ? true : !!user;
 

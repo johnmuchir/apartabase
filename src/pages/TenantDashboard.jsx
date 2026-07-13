@@ -56,9 +56,13 @@ export default function TenantDashboard() {
         // Nuclear exit: if STILL no tenant after self-heal, the demo session is
         // completely broken — clear all state and send visitor back to /welcome
         if (!fresh) {
-          localStorage.removeItem("demo_role");
-          localStorage.removeItem("demo_user");
-          localStorage.removeItem("apartabase_mock_db");
+          try {
+            localStorage.removeItem("demo_role");
+            localStorage.removeItem("demo_user");
+            localStorage.removeItem("apartabase_mock_db");
+          } catch (e) {
+            console.warn("localStorage is not accessible", e);
+          }
           navigate("/welcome", { replace: true });
           return;
         }
@@ -103,9 +107,13 @@ export default function TenantDashboard() {
               </p>
               <Button
                 onClick={() => {
-                  localStorage.removeItem("demo_role");
-                  localStorage.removeItem("demo_user");
-                  localStorage.removeItem("apartabase_mock_db");
+                  try {
+                    localStorage.removeItem("demo_role");
+                    localStorage.removeItem("demo_user");
+                    localStorage.removeItem("apartabase_mock_db");
+                  } catch (e) {
+                    console.warn("localStorage is not accessible", e);
+                  }
                   window.location.href = "/welcome";
                 }}
                 className="w-full max-w-xs h-10 font-semibold text-xs rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white"

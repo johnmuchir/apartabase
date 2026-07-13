@@ -69,7 +69,12 @@ export default function Welcome() {
 
   // If already authenticated with a real session, skip welcome
   useEffect(() => {
-    const isDemo = localStorage.getItem("demo_role") || localStorage.getItem("demo_user");
+    let isDemo = false;
+    try {
+      isDemo = localStorage.getItem("demo_role") || localStorage.getItem("demo_user");
+    } catch (e) {
+      console.warn("localStorage is not accessible", e);
+    }
     if (isAuthenticated && !isDemo) {
       navigate("/", { replace: true });
     }
@@ -78,8 +83,12 @@ export default function Welcome() {
   const handleLaunchDemo = (role) => {
     // Clear any existing session and wipe mock DB so every demo starts fresh
     signOut().then(() => {
-      localStorage.removeItem("apartabase_mock_db"); // force fresh seed on next load
-      localStorage.setItem("demo_role", role);
+      try {
+        localStorage.removeItem("apartabase_mock_db"); // force fresh seed on next load
+        localStorage.setItem("demo_role", role);
+      } catch (e) {
+        console.warn("localStorage is not accessible", e);
+      }
       toast({
         title: `Launching ${role.charAt(0).toUpperCase() + role.slice(1)} Demo`,
         description: "Entering sandbox mode. No real data is affected.",

@@ -1,11 +1,83 @@
 import { createClient } from '@supabase/supabase-js';
 import { mockDb } from './mockDb';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder-project.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-anon-key';
+const safeGetItem = (key) => {
+  try {
+    return typeof window !== 'undefined' ? localStorage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+};
 
-// Instantiate the real client
-const realSupabase = createClient(supabaseUrl, supabaseAnonKey);
+const safeSetItem = (key, value) => {
+  try {
+    if (typeof window !== 'undefined') localStorage.setItem(key, value);
+  } catch (err) {
+    console.warn("localStorage.setItem failed:", err);
+  }
+};
+
+const safeRemoveItem = (key) => {
+  try {
+    if (typeof window !== 'undefined') localStorage.removeItem(key);
+  } catch (err) {
+    console.warn("localStorage.removeItem failed:", err);
+  }
+};
+
+let realSupabase;
+try {
+  const isUrlValid = (url) => {
+    try {
+      const u = new URL(url);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch {
+      return false;
+    }
+  };
+
+  const rawUrl = import.meta.env.VITE_SUPABASE_URL;
+  const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  const supabaseUrl = rawUrl && isUrlValid(rawUrl) ? rawUrl : 'https://placeholder-project.supabase.co';
+  const supabaseAnonKey = rawKey || 'placeholder-anon-key';
+
+  realSupabase = createClient(supabaseUrl, supabaseAnonKey);
+} catch (err) {
+  console.error("Failed to initialize real Supabase client:", err);
+  // Create a minimal dummy client to prevent null pointer exceptions
+  realSupabase = {
+    auth: {
+      async getSession() { return { data: { session: null }, error: null }; },
+      async getUser() { return { data: { user: null }, error: null }; },
+      onAuthStateChange() { return { data: { subscription: { unsubscribe: () => {} } } }; },
+      async signInWithPassword() { return { data: { user: null }, error: new Error('Supabase client failed to initialize') }; },
+      async signUp() { return { data: { user: null }, error: new Error('Supabase client failed to initialize') }; },
+      async signOut() { return { error: null }; },
+      async resetPasswordForEmail() { return { error: null }; },
+      async updateUser() { return { data: { user: null }, error: null }; },
+    },
+    from() {
+      return {
+        select() { return this; },
+        match() { return this; },
+        eq() { return this; },
+        neq() { return this; },
+        gt() { return this; },
+        gte() { return this; },
+        lt() { return this; },
+        lte() { return this; },
+        in() { return this; },
+        or() { return this; },
+        order() { return this; },
+        limit() { return this; },
+        single() { return this; },
+        maybeSingle() { return this; },
+        then(resolve) { resolve({ data: [], error: new Error('Supabase client failed to initialize'), count: 0 }); }
+      };
+    }
+  };
+}
 
 // Check if we are running in simulated/demo mode.
 // NOTE: /login and /accept-invite are intentionally excluded — real users must
@@ -14,8 +86,8 @@ const realSupabase = createClient(supabaseUrl, supabaseAnonKey);
 export const isDemoMode = () => {
   if (typeof window === 'undefined') return false;
   return (
-    !!localStorage.getItem('demo_role') ||
-    !!localStorage.getItem('demo_user') ||
+    !!safeGetItem('demo_role') ||
+    !!safeGetItem('demo_user') ||
     window.location.pathname === '/welcome'
   );
 };
@@ -246,8 +318,8 @@ const mockAuth = {
   async getSession() {
     if (!isDemoMode()) return { data: { session: null }, error: null };
 
-    const role = localStorage.getItem('demo_role') || 'tenant';
-    const savedUser = localStorage.getItem('demo_user');
+    const role = safeGetItem('demo_role') || 'tenant';
+    const savedUser = safeGetItem('demo_user');
     const profile = savedUser ? JSON.parse(savedUser) : {
       id: `demo-${role}-id`,
       email: `${role}@apartabase.app`,
@@ -288,8 +360,8 @@ const mockAuth = {
     }
 
     // Set demo state
-    localStorage.setItem('demo_role', matched.role);
-    localStorage.setItem('demo_user', JSON.stringify(matched));
+    safeSetItem('demo_role', matched.role);
+    safeSetItem('demo_user', JSON.stringify(matched));
 
     return {
       data: {
@@ -340,8 +412,8 @@ const mockAuth = {
   },
 
   async signOut() {
-    localStorage.removeItem('demo_role');
-    localStorage.removeItem('demo_user');
+    safeRemoveItem('demo_role');
+    safeRemoveItem('demo_user');
     return { error: null };
   },
 
