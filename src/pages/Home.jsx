@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import AgentDashboard from "@/pages/AgentDashboard";
 import LandlordDashboard from "@/pages/LandlordDashboard";
 import TenantDashboard from "@/pages/TenantDashboard";
+import CaretakerDashboard from "@/pages/CaretakerDashboard";
 import LoadingSpinner from "@/components/shared/LoadingSpinner";
 
 export default function Home() {
@@ -17,5 +18,6 @@ export default function Home() {
 
   if (role === "tenant") return <TenantDashboard />;
   if (role === "agent") return <AgentDashboard />;
+  if (role === "caretaker") return <CaretakerDashboard />;
   return <LandlordDashboard />;
 }

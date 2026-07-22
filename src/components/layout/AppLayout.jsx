@@ -21,10 +21,10 @@ export default function AppLayout() {
             <span>Interactive Demo Sandbox ({demoRole.toUpperCase()})</span>
           </div>
           <button 
-            onClick={handleExitDemo}
-            className="flex items-center gap-1 bg-white/10 hover:bg-white/20 text-white px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200"
+            onClick={signOut}
+            className="flex items-center text-red-600 gap-1 bg-white/10 hover:bg-white/20 px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200"
           >
-            <LogOut className="w-3 h-3" /> Exit Demo
+            <LogOut className="w-3 h-3 text-red-300" /> Exit Demo
           </button>
         </div>
       )}

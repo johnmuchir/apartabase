@@ -76,7 +76,7 @@ export default function Welcome() {
       console.warn("localStorage is not accessible", e);
     }
     if (isAuthenticated && !isDemo) {
-      navigate("/", { replace: true });
+      navigate("", { replace: true });
     }
   }, [isAuthenticated, navigate]);
 
@@ -117,9 +117,6 @@ export default function Welcome() {
       <main className="max-w-4xl mx-auto px-6 py-12 space-y-16">
         {/* Hero Section */}
         <section className="text-center space-y-6 max-w-2xl mx-auto py-4">
-          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-            <Info className="w-3.5 h-3.5" /> Simulated Sandbox Enabled
-          </span>
           <h1 className="text-4xl md:text-5xl font-extrabold font-outfit tracking-tight leading-[1.15] bg-gradient-to-br from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">
             ApartaBase Property Management Platform
           </h1>
